@@ -1,0 +1,75 @@
+<!-- templates/create_user.html -->
+{% extends "base.html" %}
+
+{% block title %}Create User - Flask App with Duo MFA{% endblock %}
+
+{% block styles %}
+<style>
+    .form-group {
+        margin-bottom: 15px;
+    }
+    label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    input[type="text"],
+    input[type="email"],
+    input[type="password"] {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+        box-sizing: border-box;
+    }
+    .btn {
+        background-color: #4CAF50;
+        color: white;
+        padding: 10px 15px;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+    }
+    .btn:hover {
+        background-color: #45a049;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+    <h1>Create New User</h1>
+
+    <form id="create-user-form" onsubmit="createUser(event)">
+        <div class="form-group">
+            <label for="username">Username (Email):</label>
+            <input type="email" id="username" name="username" required>
+        </div>
+        <div class="form-group">
+            <label for="password">Password:</label>
+            <input type="password" id="password" name="password" required minlength="8">
+            <small>Password must be at least 8 characters and include uppercase letters, lowercase letters, and numbers.</small>
+        </div>
+        <button type="submit" class="btn">Create User</button>
+    </form>
+
+    <script>
+        function createUser(event) {
+            event.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            // Simple password validation
+            const hasUpper = /[A-Z]/.test(password);
+            const hasLower = /[a-z]/.test(password);
+            const hasDigit = /[0-9]/.test(password);
+
+            if (password.length < 8 || !hasUpper || !hasLower || !hasDigit) {
+                alert('Password must be at least 8 characters and include uppercase letters, lowercase letters, and numbers.');
+                return;
+            }
+
+            // Redirect to the create-user route with parameters
+            window.location.href = `/create-user/${encodeURIComponent(username)}/${encodeURIComponent(password)}`;
+        }
+    </script>
+{% endblock %}

@@ -1,0 +1,89 @@
+<!-- disable_mfa.html -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Disable MFA</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f4f4f4;
+      }
+      .container {
+        max-width: 500px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: white;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      }
+      h2 {
+        margin-top: 0;
+        color: #333;
+      }
+      p {
+        line-height: 1.5;
+      }
+      .warning {
+        color: #d9534f;
+        font-weight: bold;
+      }
+      .buttons {
+        margin-top: 20px;
+      }
+      .btn-danger {
+        background-color: #d9534f;
+        color: white;
+        padding: 10px 15px;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        margin-right: 10px;
+      }
+      .btn-secondary {
+        background-color: #f4f4f4;
+        color: #333;
+        padding: 10px 15px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+      }
+      .btn-danger:hover {
+        background-color: #c9302c;
+      }
+      .btn-secondary:hover {
+        background-color: #e7e7e7;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>Disable Multi-Factor Authentication</h2>
+      <p>
+        You are about to disable multi-factor authentication for your account.
+      </p>
+      <p class="warning">
+        Warning: This will reduce the security of your account. Without MFA,
+        anyone who obtains your password will be able to access your account.
+      </p>
+
+      <div class="buttons">
+        <form method="POST">
+          <button type="submit" class="btn-danger">Disable MFA</button>
+          <a
+            href="{{ url_for('duo_flask_auth.login_success') }}"
+            class="btn-secondary"
+            >Cancel</a
+          >
+        </form>
+      </div>
+    </div>
+  </body>
+</html>

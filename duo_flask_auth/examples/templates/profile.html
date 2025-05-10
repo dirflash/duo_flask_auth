@@ -1,0 +1,37 @@
+<!-- templates/profile.html -->
+{% extends "base.html" %} {% block title %}Profile - Flask App with Duo MFA{%
+endblock %} {% block content %}
+<h1>User Profile</h1>
+
+<h2>Account Information:</h2>
+<p><strong>Username:</strong> {{ user.username }}</p>
+<p>
+  <strong>MFA Status:</strong> {% if user.mfa_enabled %}Enabled{% else
+  %}Disabled{% endif %}
+</p>
+
+<h2>Security Options:</h2>
+{% if user.mfa_enabled %}
+<p>
+  Multi-Factor Authentication is currently <strong>enabled</strong> for your
+  account.
+</p>
+<p>
+  <a href="{{ url_for('duo_flask_auth.disable_mfa') }}"
+    >Disable Multi-Factor Authentication</a
+  >
+</p>
+{% else %}
+<p>
+  Multi-Factor Authentication is currently <strong>disabled</strong> for your
+  account.
+</p>
+<p>
+  <a href="{{ url_for('duo_flask_auth.enable_mfa') }}"
+    >Enable Multi-Factor Authentication</a
+  >
+</p>
+<p class="warning">
+  For improved security, we recommend enabling MFA for your account.
+</p>
+{% endif %} {% endblock %}

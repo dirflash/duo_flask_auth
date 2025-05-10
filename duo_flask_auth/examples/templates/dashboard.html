@@ -1,0 +1,31 @@
+<!-- templates/dashboard.html -->
+{% extends "base.html" %} {% block title %}Dashboard - Flask App with Duo MFA{%
+endblock %} {% block content %}
+<h1>Dashboard</h1>
+
+<p>Welcome to your dashboard, <strong>{{ user.username }}</strong>!</p>
+
+<h2>Account Actions:</h2>
+<ul>
+  <li><a href="{{ url_for('profile') }}">View your profile</a></li>
+  {% if user.mfa_enabled %}
+  <li>
+    <a href="{{ url_for('duo_flask_auth.disable_mfa') }}"
+      >Disable Multi-Factor Authentication</a
+    >
+  </li>
+  {% else %}
+  <li>
+    <a href="{{ url_for('duo_flask_auth.enable_mfa') }}"
+      >Enable Multi-Factor Authentication</a
+    >
+  </li>
+  {% endif %}
+</ul>
+
+<h2>Application Status:</h2>
+<p>
+  MFA Status:
+  <strong>{% if user.mfa_enabled %}Enabled{% else %}Disabled{% endif %}</strong>
+</p>
+{% endblock %}

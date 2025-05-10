@@ -1,0 +1,28 @@
+<!-- templates/home.html -->
+{% extends "base.html" %} {% block title %}Home - Flask App with Duo MFA{%
+endblock %} {% block content %}
+<h1>Welcome to the Duo MFA Demo</h1>
+
+<p>
+  This is a demonstration of the Duo Flask Auth library, which provides
+  authentication with Duo Multi-Factor Authentication integration.
+</p>
+
+{% if current_user.is_authenticated %}
+<p>You are logged in as <strong>{{ current_user.username }}</strong>.</p>
+<p><a href="{{ url_for('dashboard') }}">Go to your dashboard</a></p>
+{% else %}
+<p>
+  Please <a href="{{ url_for('duo_flask_auth.login') }}">log in</a> to access
+  the protected areas of the application.
+</p>
+{% endif %}
+
+<h2>Features:</h2>
+<ul>
+  <li>User authentication with username and password</li>
+  <li>Duo Multi-Factor Authentication integration</li>
+  <li>MongoDB for user storage</li>
+  <li>User management (admin features)</li>
+</ul>
+{% endblock %}

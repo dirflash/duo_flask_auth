@@ -1,0 +1,86 @@
+<!-- templates/admin.html -->
+{% extends "base.html" %} {% block title %}Admin Panel - Flask App with Duo
+MFA{% endblock %} {% block styles %}
+<style>
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+  }
+  table,
+  th,
+  td {
+    border: 1px solid #ddd;
+  }
+  th,
+  td {
+    padding: 12px;
+    text-align: left;
+  }
+  th {
+    background-color: #f2f2f2;
+  }
+  tr:nth-child(even) {
+    background-color: #f9f9f9;
+  }
+  .actions {
+    display: flex;
+    gap: 10px;
+  }
+  .btn {
+    padding: 5px 10px;
+    border-radius: 3px;
+    text-decoration: none;
+    color: white;
+  }
+  .btn-primary {
+    background-color: #4caf50;
+  }
+  .btn-danger {
+    background-color: #f44336;
+  }
+</style>
+{% endblock %} {% block content %}
+<h1>Admin Panel</h1>
+
+<p>
+  Welcome to the administrative panel. Here you can manage users and view system
+  information.
+</p>
+
+<h2>User Management</h2>
+<p>
+  <a href="{{ url_for('create_user_form') }}" class="btn btn-primary"
+    >Create New User</a
+  >
+</p>
+
+<h3>User List</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Username</th>
+      <th>Created By</th>
+      <th>Created At</th>
+      <th>Role</th>
+      <th>MFA Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for user in users %}
+    <tr>
+      <td>{{ user.username }}</td>
+      <td>{{ user.created_by }}</td>
+      <td>{{ user.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+      <td>{{ user.role }}</td>
+      <td>{% if user.mfa_enabled %}Enabled{% else %}Disabled{% endif %}</td>
+      <td class="actions">
+        <a href="#" class="btn btn-primary">Edit</a>
+        <a href="#" class="btn btn-danger">Disable</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
