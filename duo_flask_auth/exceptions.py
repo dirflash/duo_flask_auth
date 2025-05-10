@@ -1,5 +1,5 @@
 """
-duo_flask_auth.exceptions - Custom exception classes for the Duo Flask Auth library
+Exceptions for the Duo Flask Auth library.
 
 This module provides custom exception classes for various authentication-related errors.
 """

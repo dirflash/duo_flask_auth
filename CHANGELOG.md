@@ -5,6 +5,50 @@ All notable changes to the Duo Flask Auth library will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-05-15
+
+### Added
+
+- Flexibility enhancements:
+  - Multiple database backend support:
+    - Added abstract `DatabaseAdapter` interface
+    - Implemented MongoDB adapter
+    - Added SQLAlchemy adapter for SQL databases
+    - Added factory function for creating adapters
+  - Customizable user model:
+    - Created extensible `BaseUser` class
+    - Added user factory pattern for creating different user types
+    - Implemented registry for custom user models
+  - Configurable routes:
+    - Added ability to specify custom route prefix
+    - Used Blueprint architecture for route organization
+  - Enhanced error handling:
+    - Created comprehensive exception hierarchy
+    - Added specific exceptions for different error types
+- New classes and modules:
+  - `db_adapters.py` for database abstraction
+  - `user_model.py` for user model customization
+  - `exceptions.py` for error handling
+- Additional documentation:
+  - Added examples for different database backends
+  - Added examples for custom user models
+  - Added examples for route configuration
+
+### Changed
+
+- Refactored core authentication logic to use database adapters
+- Updated user loading to use the user factory system
+- Improved error handling with custom exceptions
+- Enhanced documentation with flexibility examples
+- Updated type hints for better IDE support
+
+### Improved
+
+- Better error messages for configuration issues
+- More consistent method signatures
+- Cleaner separation of concerns
+- Better organization of code
+
 ## [0.2.0] - 2025-05-10
 
 ### Added

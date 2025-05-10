@@ -1,13 +1,14 @@
 # Duo Flask Auth
 
-A reusable Flask authentication library with Duo MFA support and enhanced security features. This library provides a clean, simple way to add secure authentication and Multi-Factor Authentication (MFA) to your Flask applications.
+A reusable Flask authentication library with Duo MFA support, enhanced security features, and flexibility improvements. This library provides a clean, simple way to add secure authentication and Multi-Factor Authentication (MFA) to your Flask applications.
 
 ## Features
 
 - User authentication with username and password
 - Duo MFA integration using Duo Universal Prompt
-- MongoDB integration for user storage
-- User management (add users, enable/disable MFA)
+- Multiple database backend support (MongoDB, SQLAlchemy)
+- Customizable user model with extensibility
+- Configurable routes to match your application's URL structure
 - Comprehensive security features:
   - Rate limiting
   - Account lockout
@@ -35,10 +36,10 @@ pip install git+https://github.com/yourusername/duo-flask-auth.git
 - Flask 2.0+
 - Flask-Login 0.5+
 - Flask-WTF 1.0+ (for CSRF protection)
-- Duo Universal SDK 1.0+
-- PyMongo 4.0+
-- Werkzeug 2.0+
-- MongoDB (for user storage)
+- Duo Universal SDK 1.0+ (for MFA functionality)
+- Database dependencies (based on adapter choice):
+  - MongoDB: PyMongo 4.0+
+  - SQL: SQLAlchemy 1.4+
 
 ## Quick Start
 
@@ -158,7 +159,7 @@ auth = DuoFlaskAuth(app, db_config=db_config, password_policy=password_policy)
 
 ### Security Event Logging
 
-The library logs all security-related events to a dedicated MongoDB collection for audit purposes. Events include login attempts, password changes, account lockouts, etc.
+The library logs all security-related events to a dedicated collection for audit purposes. Events include login attempts, password changes, account lockouts, etc.
 
 ### Complete Security Configuration
 
@@ -208,6 +209,118 @@ auth = DuoFlaskAuth(
 )
 ```
 
+## Flexibility Features
+
+The library has been designed with flexibility in mind, allowing you to adapt it to different applications and environments.
+
+### 1. Multiple Database Backend Support
+
+Choose the database backend that works best for your application:
+
+```python
+# Using MongoDB (default)
+auth = DuoFlaskAuth(
+    app,
+    db_config={
+        'username': 'mongo_user',
+        'password': 'mongo_pass',
+        'host': 'mongodb.example.com',
+        'database': 'auth_db'
+    }
+)
+
+# Using SQLAlchemy with SQLite
+auth = DuoFlaskAuth(
+    app,
+    db_adapter='sqlalchemy',
+    db_config={
+        'url': 'sqlite:///users.db'
+    }
+)
+
+# Using SQLAlchemy with PostgreSQL
+auth = DuoFlaskAuth(
+    app,
+    db_adapter='sqlalchemy',
+    db_config={
+        'url': 'postgresql://user:pass@localhost/auth_db'
+    }
+)
+
+# Using a custom adapter
+class MyCustomAdapter(DatabaseAdapter):
+    # Implement the required methods...
+
+auth = DuoFlaskAuth(
+    app,
+    db_adapter=MyCustomAdapter()
+)
+```
+
+### 2. Customizable User Model
+
+Extend the user model with application-specific fields and methods:
+
+```python
+from duo_flask_auth import BaseUser, register_user_model
+
+# Define your custom user class
+class EnterpriseUser(BaseUser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.employee_id = kwargs.get('employee_id')
+        self.department = kwargs.get('department')
+        self.permissions = kwargs.get('permissions', [])
+
+    def has_permission(self, permission):
+        return permission in self.permissions
+
+# Create a factory function
+def enterprise_user_factory(user_data):
+    return EnterpriseUser(
+        user_id=str(user_data.get("_id", user_data.get("id", ""))),
+        username=user_data.get("username"),
+        password_hash=user_data.get("password_hash"),
+        mfa_enabled=user_data.get("mfa_enabled", False),
+        # Standard fields...
+        employee_id=user_data.get("employee_id"),
+        department=user_data.get("department"),
+        permissions=user_data.get("permissions", [])
+    )
+
+# Register your model
+register_user_model('enterprise', enterprise_user_factory)
+
+# Use your model
+auth = DuoFlaskAuth(app, user_model='enterprise')
+
+# Now you can use your custom methods
+@app.route('/admin-only')
+@auth.login_required
+def admin_only():
+    if current_user.has_permission('admin_panel'):
+        return "Welcome to the admin panel"
+    return "Access denied"
+```
+
+### 3. Configurable Routes
+
+Configure authentication routes to match your application's URL structure:
+
+```python
+# Default routes at /auth/login, /auth/logout, etc.
+auth = DuoFlaskAuth(app)
+
+# Custom routes at /identity/login, /identity/logout, etc.
+auth = DuoFlaskAuth(app, routes_prefix='/identity')
+
+# API routes at /api/v1/auth/login, etc.
+auth = DuoFlaskAuth(app, routes_prefix='/api/v1/auth')
+
+# Root routes at /login, /logout, etc.
+auth = DuoFlaskAuth(app, routes_prefix='')
+```
+
 ## Using Deferred Initialization
 
 If you're using an application factory pattern, you can initialize the extension later:
@@ -235,10 +348,18 @@ def create_app():
 
 ### Database Configuration
 
+#### MongoDB
+
 - `username`: MongoDB username
 - `password`: MongoDB password
 - `host`: MongoDB host address
 - `database`: MongoDB database name
+
+#### SQLAlchemy
+
+- `url`: Database URL (e.g., 'sqlite:///users.db', 'postgresql://user:pass@localhost/dbname')
+- `echo`: Enable SQL query logging (default: False)
+- `pool_size`: Connection pool size (default: 10)
 
 ### Duo MFA Configuration
 
@@ -265,9 +386,21 @@ The library comes with basic templates for login, enabling MFA, and disabling MF
 
 The main class that provides authentication functionality.
 
+#### Constructor Parameters
+
+- `app`: Flask application instance (optional)
+- `db_config`: Database configuration dictionary (optional)
+- `db_adapter`: Database adapter type ('mongodb', 'sqlalchemy') or instance (optional)
+- `duo_config`: Duo MFA configuration dictionary (optional)
+- `template_folder`: Folder for auth templates (default: 'templates')
+- `routes_prefix`: Prefix for authentication routes (default: '/auth')
+- `user_model`: User model type (default: 'default')
+- `rate_limit_config`: Rate limiting configuration (optional)
+- `account_lockout_config`: Account lockout configuration (optional)
+- `password_policy`: Password policy configuration (optional)
+
 #### Methods
 
-- `__init__(app=None, db_config=None, duo_config=None, template_folder='templates', rate_limit_config=None, account_lockout_config=None, password_policy=None)`: Initialize the extension
 - `init_app(app)`: Initialize the extension with a Flask application
 - `login()`: Handle user login with optional Duo MFA
 - `logout()`: Log out the current user
@@ -283,9 +416,9 @@ The main class that provides authentication functionality.
 - `unlock_account(username)`: Unlock a locked user account
 - `log_security_event(event_type, username, ip_address=None, details=None)`: Log a security event
 
-### User
+### BaseUser
 
-Represents a user in the Flask-Login system.
+Base class for user models in the system.
 
 #### Attributes
 
@@ -314,6 +447,23 @@ Represents a user in the Flask-Login system.
 - `check_password(password)`: Verify if the provided password matches the stored hash
 - `get_id()`: Return the user ID for Flask-Login
 - `is_account_locked`: Property that checks if the account is locked
+
+### DatabaseAdapter
+
+Abstract base class for database adapters.
+
+#### Key Methods
+
+- `initialize(app=None)`: Initialize the database adapter
+- `get_user(username)`: Retrieve a user by username
+- `create_user(user_data)`: Create a new user
+- `update_user(username, update_data)`: Update a user's data
+- `delete_user(username)`: Delete a user
+- `increment_login_attempts(username)`: Increment login attempts counter
+- `reset_login_attempts(username)`: Reset login attempts counter
+- `get_user_by_reset_token(token)`: Get a user by reset token
+- `log_security_event(event_data)`: Log a security event
+- `get_security_events(filters=None, limit=100)`: Get security events
 
 ## MongoDB Schema
 
