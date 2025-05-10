@@ -1,0 +1,125 @@
+<!-- templates/unlock_account.html -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Unlock Account</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f4f4f4;
+      }
+      .container {
+        max-width: 600px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: white;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      }
+      h2 {
+        margin-top: 0;
+        color: #333;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 10px;
+      }
+      .alert {
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+      }
+      .alert-warning {
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeeba;
+      }
+      .user-details {
+        margin: 20px 0;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+      }
+      .user-details p {
+        margin: 5px 0;
+      }
+      .user-details .label {
+        font-weight: bold;
+        width: 180px;
+        display: inline-block;
+      }
+      .actions {
+        margin-top: 30px;
+        display: flex;
+        justify-content: space-between;
+      }
+      .btn {
+        padding: 10px 15px;
+        background-color: #4caf50;
+        color: white;
+        text-decoration: none;
+        border-radius: 3px;
+        border: none;
+        cursor: pointer;
+      }
+      .btn-warning {
+        background-color: #ffc107;
+        color: #212529;
+      }
+      .btn-danger {
+        background-color: #dc3545;
+      }
+      .btn-secondary {
+        background-color: #6c757d;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>Unlock Account</h2>
+
+      <div class="alert alert-warning">
+        You are about to unlock a user account. This will reset their failed
+        login attempts counter and remove any lockout restrictions.
+      </div>
+
+      <div class="user-details">
+        <p><span class="label">Username:</span> {{ user.username }}</p>
+        <p>
+          <span class="label">Account Status:</span>
+          {% if user.is_active %}
+          <span style="color: #4caf50">Active</span>
+          {% else %}
+          <span style="color: #dc3545">Inactive</span>
+          {% endif %}
+        </p>
+        <p>
+          <span class="label">Locked Until:</span>
+          {% if user.locked_until %} {{ user.locked_until }} {% else %} Not
+          locked {% endif %}
+        </p>
+        <p>
+          <span class="label">Failed Login Attempts:</span> {{
+          user.login_attempts }}
+        </p>
+        <p>
+          <span class="label">Last Login:</span>
+          {% if user.last_login %} {{ user.last_login }} {% else %} Never {%
+          endif %}
+        </p>
+      </div>
+
+      <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+
+        <div class="actions">
+          <button type="submit" class="btn">Unlock Account</button>
+          <a href="{{ cancel_url }}" class="btn btn-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </body>
+</html>

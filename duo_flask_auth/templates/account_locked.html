@@ -1,0 +1,106 @@
+<!-- templates/account_locked.html -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Account Locked</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f4f4f4;
+      }
+      .container {
+        max-width: 500px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: white;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      }
+      h2 {
+        margin-top: 0;
+        color: #333;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 10px;
+      }
+      .alert {
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+      }
+      .alert-error {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+      .alert-info {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+      }
+      .actions {
+        margin-top: 30px;
+      }
+      .btn {
+        display: inline-block;
+        padding: 10px 15px;
+        margin-right: 10px;
+        background-color: #4caf50;
+        color: white;
+        text-decoration: none;
+        border-radius: 3px;
+        border: none;
+      }
+      .btn-secondary {
+        background-color: #6c757d;
+      }
+      .lockout-details {
+        margin: 20px 0;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+      }
+      .lockout-details p {
+        margin: 5px 0;
+      }
+      .lockout-details .label {
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>Account Locked</h2>
+
+      <div class="alert alert-error">
+        Your account has been temporarily locked due to multiple failed login
+        attempts.
+      </div>
+
+      <div class="lockout-details">
+        <p><span class="label">Username:</span> {{ username }}</p>
+        <p><span class="label">Locked until:</span> {{ locked_until }}</p>
+        <p><span class="label">Reason:</span> {{ reason }}</p>
+      </div>
+
+      <p>
+        For security reasons, your account has been temporarily locked. You can
+        try again after the lockout period expires, or contact an administrator
+        for assistance.
+      </p>
+
+      <div class="actions">
+        <a href="{{ url_for('duo_flask_auth.login') }}" class="btn"
+          >Return to Login</a
+        >
+        <a href="{{ reset_password_url }}" class="btn btn-secondary"
+          >Reset Password</a
+        >
+      </div>
+    </div>
+  </body>
+</html>
