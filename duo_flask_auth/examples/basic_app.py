@@ -6,8 +6,10 @@ into a Flask application.
 """
 
 import os
-from flask import Flask, render_template, redirect, url_for, flash
+from datetime import datetime
+from flask import Flask, render_template, redirect, url_for, flash, request
 from flask_login import current_user, login_required
+from werkzeug.security import generate_password_hash
 from duo_flask_auth import DuoFlaskAuth
 
 # Create the Flask app
@@ -99,10 +101,83 @@ def create_user(username, password):
     """Create a new user (admin only)"""
     result = auth.add_user(username, password)
     if result.startswith("Success"):
+        # Optionally verify the email automatically
+        auth.verify_email(username)
         flash("User created successfully.", "success")
     else:
         flash(result, "error")
     return redirect(url_for('admin_panel'))
+
+@app.route('/update-role/<username>/<role>')
+@login_required
+def update_role(username, role):
+    """Update a user's role (admin only)"""
+    # Check if the user has admin role (similar to admin_panel)
+    mongo_url = auth.mongo_connect()
+    local_db = mongo_url[db_config['database']]
+    users_collection = local_db["users"]
+    current_user_data = users_collection.find_one({"username": current_user.username})
+
+    if not current_user_data or current_user_data.get("role") != "admin":
+        flash("You don't have permission to update user roles.", "error")
+        return redirect(url_for('dashboard'))
+
+    # Update the user's role
+    if auth.update_user_role(username, role):
+        flash(f"User role updated to {role}.", "success")
+    else:
+        flash("Failed to update user role.", "error")
+
+    return redirect(url_for('admin_panel'))
+
+@app.route('/toggle-active/<username>/<int:active>')
+@login_required
+def toggle_active(username, active):
+    """Activate or deactivate a user account (admin only)"""
+    # Check if the user has admin role (similar to admin_panel)
+    mongo_url = auth.mongo_connect()
+    local_db = mongo_url[db_config['database']]
+    users_collection = local_db["users"]
+    current_user_data = users_collection.find_one({"username": current_user.username})
+
+    if not current_user_data or current_user_data.get("role") != "admin":
+        flash("You don't have permission to activate/deactivate users.", "error")
+        return redirect(url_for('dashboard'))
+
+    # Convert active param to boolean
+    is_active = bool(active)
+
+    # Update the user's active status
+    if auth.set_user_active_status(username, is_active):
+        status = "activated" if is_active else "deactivated"
+        flash(f"User account {status}.", "success")
+    else:
+        flash("Failed to update user account status.", "error")
+
+    return redirect(url_for('admin_panel'))
+
+@app.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    """Handle forgot password requests"""
+    if request.method == 'GET':
+        return render_template('forgot_password.html')
+
+    # Process the form submission
+    username = request.form.get('username')
+    if not username:
+        flash("Please enter your email address.", "error")
+        return render_template('forgot_password.html')
+
+    # Generate a password reset token
+    token = auth.generate_password_reset_token(username)
+
+    if token:
+        # In a real application, you would send this token to the user's email
+        # For this example, we'll just display it
+        reset_url = url_for('reset_password', username=username, token=token, _external=True)
+        flash(f"Password reset link generated. In a real application, this would be emailed to the user.", "success")
+        flash(f"Reset link: {reset_url}", "info")
+
 
 if __name__ == '__main__':
     app.run(debug=True)

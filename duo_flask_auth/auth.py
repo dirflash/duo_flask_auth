@@ -8,7 +8,7 @@ for Flask applications, extracted from the original application.
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple, Any, Callable
 
 import certifi
@@ -203,12 +203,24 @@ class DuoFlaskAuth:
         user_data = users_collection.find_one({"username": user_id})
 
         if user_data:
-            # Create a User object with the data from MongoDB
+            # Create a User object with the data from MongoDB, including all schema fields
             return User(
                 user_id=str(user_data.get("_id")),
                 username=user_data.get("username"),
                 password_hash=user_data.get("password_hash"),
-                mfa_enabled=user_data.get("mfa_enabled", False),  # Default to False if not set
+                mfa_enabled=user_data.get("mfa_enabled", False),
+                is_active=user_data.get("is_active", True),
+                role=user_data.get("role", "user"),
+                created_by=user_data.get("created_by"),
+                created_at=user_data.get("created_at"),
+                last_password_change=user_data.get("last_password_change"),
+                account_id=user_data.get("account_id"),
+                login_attempts=user_data.get("login_attempts", 0),
+                creation_ip=user_data.get("creation_ip"),
+                last_login=user_data.get("last_login"),
+                email_verified=user_data.get("email_verified", False),
+                reset_token=user_data.get("reset_token"),
+                reset_token_expires=user_data.get("reset_token_expires")
             )
 
         return None
@@ -257,12 +269,24 @@ class DuoFlaskAuth:
             current_app.logger.debug(f"User not found: {username}")
             return render_template("login_page.html", error=True)
 
-        # Create a User object with the data from MongoDB
+        # Create a User object with the complete data from MongoDB
         user = User(
             user_id=str(user_data.get("_id")),
             username=user_data.get("username"),
             password_hash=user_data.get("password_hash"),
-            mfa_enabled=user_data.get("mfa_enabled", False),  # Default to False if not set
+            mfa_enabled=user_data.get("mfa_enabled", False),
+            is_active=user_data.get("is_active", True),
+            role=user_data.get("role", "user"),
+            created_by=user_data.get("created_by"),
+            created_at=user_data.get("created_at"),
+            last_password_change=user_data.get("last_password_change"),
+            account_id=user_data.get("account_id"),
+            login_attempts=user_data.get("login_attempts", 0),
+            creation_ip=user_data.get("creation_ip"),
+            last_login=user_data.get("last_login"),
+            email_verified=user_data.get("email_verified", False),
+            reset_token=user_data.get("reset_token"),
+            reset_token_expires=user_data.get("reset_token_expires")
         )
 
         # Debug user details
@@ -275,9 +299,33 @@ class DuoFlaskAuth:
 
         if not password_check:
             current_app.logger.debug(f"Password check failed for user: {username}")
+
+            # Increment login attempts counter
+            users_collection.update_one(
+                {"username": username},
+                {"$inc": {"login_attempts": 1}}
+            )
+
             return render_template("login_page.html", error=True)
 
+        # Check if the user is active
+        if not user.is_active:
+            current_app.logger.warning(f"Login attempt for inactive account: {username}")
+            return render_template("login_page.html", error=True,
+                                  message="This account has been deactivated. Please contact an administrator.")
+
         # Password check passed
+        # Reset login attempts counter and update last login time
+        users_collection.update_one(
+            {"username": username},
+            {
+                "$set": {
+                    "login_attempts": 0,
+                    "last_login": datetime.utcnow()
+                }
+            }
+        )
+
         # If Duo MFA is enabled for this user and Duo is configured, redirect to Duo
         if user.mfa_enabled and self.duo_client is not None:
             try:
@@ -445,6 +493,213 @@ class DuoFlaskAuth:
 
         return redirect(url_for("duo_flask_auth.login_success"))
 
+    def verify_email(self, username: str):
+        """
+        Mark a user's email as verified.
+
+        Args:
+            username (str): The username (email) to verify
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            mongo_url = self.mongo_connect()
+            db_name = self.db_config.get('database')
+
+            local_db = mongo_url[db_name]
+            users_collection = local_db["users"]
+
+            result = users_collection.update_one(
+                {"username": username},
+                {"$set": {"email_verified": True}}
+            )
+
+            current_app.logger.info(f"Email verified for user: {username}")
+            return result.modified_count == 1
+
+        except Exception as e:
+            current_app.logger.error(f"Error verifying email for user '{username}': {e}")
+            return False
+
+    def update_user_role(self, username: str, role: str):
+        """
+        Update a user's role.
+
+        Args:
+            username (str): The username to update
+            role (str): The new role to assign
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            mongo_url = self.mongo_connect()
+            db_name = self.db_config.get('database')
+
+            local_db = mongo_url[db_name]
+            users_collection = local_db["users"]
+
+            result = users_collection.update_one(
+                {"username": username},
+                {"$set": {"role": role}}
+            )
+
+            current_app.logger.info(f"Role updated for user '{username}' to '{role}'")
+            return result.modified_count == 1
+
+        except Exception as e:
+            current_app.logger.error(f"Error updating role for user '{username}': {e}")
+            return False
+
+    def set_user_active_status(self, username: str, is_active: bool):
+        """
+        Set a user's active status.
+
+        Args:
+            username (str): The username to update
+            is_active (bool): Whether the user should be active
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            mongo_url = self.mongo_connect()
+            db_name = self.db_config.get('database')
+
+            local_db = mongo_url[db_name]
+            users_collection = local_db["users"]
+
+            result = users_collection.update_one(
+                {"username": username},
+                {"$set": {"is_active": is_active}}
+            )
+
+            status_str = "activated" if is_active else "deactivated"
+            current_app.logger.info(f"User '{username}' {status_str}")
+            return result.modified_count == 1
+
+        except Exception as e:
+            current_app.logger.error(f"Error updating active status for user '{username}': {e}")
+            return False
+
+    def generate_password_reset_token(self, username: str, expiry_hours: int = 24):
+        """
+        Generate a password reset token for a user.
+
+        Args:
+            username (str): The username to generate a token for
+            expiry_hours (int): Number of hours until the token expires
+
+        Returns:
+            str: The reset token, or None if generation failed
+        """
+        try:
+            mongo_url = self.mongo_connect()
+            db_name = self.db_config.get('database')
+
+            local_db = mongo_url[db_name]
+            users_collection = local_db["users"]
+
+            # Generate a random token
+            reset_token = str(uuid.uuid4())
+
+            # Calculate expiry time
+            expiry_time = datetime.utcnow() + timedelta(hours=expiry_hours)
+
+            # Update the user record
+            result = users_collection.update_one(
+                {"username": username},
+                {
+                    "$set": {
+                        "reset_token": reset_token,
+                        "reset_token_expires": expiry_time
+                    }
+                }
+            )
+
+            if result.modified_count == 1:
+                current_app.logger.info(f"Password reset token generated for user: {username}")
+                return reset_token
+            else:
+                current_app.logger.error(f"Failed to generate password reset token for user: {username}")
+                return None
+
+        except Exception as e:
+            current_app.logger.error(f"Error generating password reset token for user '{username}': {e}")
+            return None
+
+    def reset_password_with_token(self, username: str, token: str, new_password: str):
+        """
+        Reset a user's password using a reset token.
+
+        Args:
+            username (str): The username to reset password for
+            token (str): The reset token
+            new_password (str): The new password
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            mongo_url = self.mongo_connect()
+            db_name = self.db_config.get('database')
+
+            local_db = mongo_url[db_name]
+            users_collection = local_db["users"]
+
+            # Find the user and check token
+            user = users_collection.find_one({
+                "username": username,
+                "reset_token": token,
+                "reset_token_expires": {"$gt": datetime.utcnow()}
+            })
+
+            if not user:
+                current_app.logger.warning(f"Invalid or expired token for user: {username}")
+                return False
+
+            # Validate the new password
+            # Check for password complexity
+            if len(new_password) < 8:
+                current_app.logger.warning("Password too short")
+                return False
+
+            has_upper = any(c.isupper() for c in new_password)
+            has_lower = any(c.islower() for c in new_password)
+            has_digit = any(c.isdigit() for c in new_password)
+
+            if not (has_upper and has_lower and has_digit):
+                current_app.logger.warning("Password not complex enough")
+                return False
+
+            # Generate new password hash
+            password_hash = generate_password_hash(new_password, method="pbkdf2:sha256")
+
+            # Update user record
+            result = users_collection.update_one(
+                {"username": username},
+                {
+                    "$set": {
+                        "password_hash": password_hash,
+                        "last_password_change": datetime.utcnow(),
+                        "reset_token": None,
+                        "reset_token_expires": None
+                    }
+                }
+            )
+
+            if result.modified_count == 1:
+                current_app.logger.info(f"Password reset successful for user: {username}")
+                return True
+            else:
+                current_app.logger.error(f"Failed to reset password for user: {username}")
+                return False
+
+        except Exception as e:
+            current_app.logger.error(f"Error resetting password for user '{username}': {e}")
+            return False
+
     @login_required
     def add_user(self, username: str, password: str):
         """
@@ -530,19 +785,26 @@ class DuoFlaskAuth:
             # All validations passed, proceed with user creation
             password_hash = generate_password_hash(password, method="pbkdf2:sha256")
 
-            # Add additional user metadata
+            # Current time
+            current_time = datetime.utcnow()
+
+            # Add user with full schema implementation
             user_data = {
                 "username": username,
                 "password_hash": password_hash,
                 "created_by": current_user.username,
-                "created_at": datetime.utcnow(),
+                "created_at": current_time,
                 "is_active": True,
                 "role": "user",  # Default role
-                "last_password_change": datetime.utcnow(),
+                "last_password_change": current_time,
                 "account_id": str(uuid.uuid4()),
                 "login_attempts": 0,
                 "creation_ip": request.remote_addr,
                 "mfa_enabled": False,  # Default to MFA disabled
+                "last_login": None,
+                "email_verified": False,
+                "reset_token": None,
+                "reset_token_expires": None
             }
 
             # Insert the new user into the collection
@@ -573,12 +835,31 @@ class User(UserMixin):
     """
 
     def __init__(
-        self, user_id: str, username: str, password_hash: str, mfa_enabled: bool = False
+        self,
+        user_id: str,
+        username: str,
+        password_hash: str,
+        mfa_enabled: bool = False,
+        **kwargs
     ):
         self.id = user_id
         self.username = username
         self.password_hash = password_hash
         self.mfa_enabled = mfa_enabled
+
+        # Additional fields from the recommended schema
+        self.is_active = kwargs.get('is_active', True)
+        self.role = kwargs.get('role', 'user')
+        self.created_by = kwargs.get('created_by')
+        self.created_at = kwargs.get('created_at')
+        self.last_password_change = kwargs.get('last_password_change')
+        self.account_id = kwargs.get('account_id')
+        self.login_attempts = kwargs.get('login_attempts', 0)
+        self.creation_ip = kwargs.get('creation_ip')
+        self.last_login = kwargs.get('last_login')
+        self.email_verified = kwargs.get('email_verified', False)
+        self.reset_token = kwargs.get('reset_token')
+        self.reset_token_expires = kwargs.get('reset_token_expires')
 
     def check_password(self, password: str) -> bool:
         """

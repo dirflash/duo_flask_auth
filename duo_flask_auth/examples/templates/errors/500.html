@@ -1,0 +1,46 @@
+<!-- templates/errors/500.html -->
+{% extends "base.html" %} {% block title %}Server Error - Flask App with Duo
+MFA{% endblock %} {% block styles %}
+<style>
+  .error-container {
+    text-align: center;
+    padding: 40px 0;
+  }
+  .error-code {
+    font-size: 120px;
+    font-weight: bold;
+    color: #f44336;
+    margin: 0;
+  }
+  .error-message {
+    font-size: 24px;
+    color: #333;
+    margin-top: 10px;
+  }
+  .error-description {
+    margin: 20px 0;
+    color: #666;
+  }
+  .btn {
+    display: inline-block;
+    padding: 10px 15px;
+    background-color: #4caf50;
+    color: white;
+    text-decoration: none;
+    border-radius: 3px;
+  }
+  .btn:hover {
+    background-color: #45a049;
+  }
+</style>
+{% endblock %} {% block content %}
+<div class="error-container">
+  <h1 class="error-code">500</h1>
+  <p class="error-message">Internal Server Error</p>
+  <p class="error-description">
+    Something went wrong on our end. Please try again later or contact support
+    if the issue persists.
+  </p>
+  <a href="{{ url_for('home') }}" class="btn">Return to Home</a>
+</div>
+{% endblock %}

@@ -20,7 +20,7 @@ pip install duo-flask-auth
 Or install directly from the repository:
 
 ```bash
-pip install git+https://github.com/dirflash/duo-flask-auth.git
+pip install git+https://github.com/yourusername/duo-flask-auth.git
 ```
 
 ## Requirements
@@ -144,16 +144,65 @@ The main class that provides authentication functionality.
 - `enable_mfa()`: Enable MFA for the current user
 - `disable_mfa()`: Disable MFA for the current user
 - `add_user(username, password)`: Add a new user to the database
+- `verify_email(username)`: Mark a user's email as verified
+- `update_user_role(username, role)`: Update a user's role
+- `set_user_active_status(username, is_active)`: Activate or deactivate a user account
+- `generate_password_reset_token(username, expiry_hours=24)`: Generate a password reset token
+- `reset_password_with_token(username, token, new_password)`: Reset a password using a token
 
 ### User
 
 Represents a user in the Flask-Login system.
 
+#### Attributes
+
+- `id`: The unique identifier for the user
+- `username`: The username (email) of the user
+- `password_hash`: The hashed password
+- `mfa_enabled`: Whether MFA is enabled for this user
+- `is_active`: Whether the user account is active
+- `role`: The user's role (e.g., "admin", "user")
+- `created_by`: Username of the user who created this account
+- `created_at`: Timestamp when the account was created
+- `last_password_change`: Timestamp of the last password change
+- `account_id`: Unique identifier for the account (UUID)
+- `login_attempts`: Number of consecutive failed login attempts
+- `creation_ip`: IP address used during account creation
+- `last_login`: Timestamp of the last successful login
+- `email_verified`: Whether the user's email has been verified
+- `reset_token`: Token for password reset (if any)
+- `reset_token_expires`: Expiration timestamp for the reset token
+
 #### Methods
 
-- `__init__(user_id, username, password_hash, mfa_enabled=False)`: Initialize a user
+- `__init__(user_id, username, password_hash, mfa_enabled=False, **kwargs)`: Initialize a user
 - `check_password(password)`: Verify if the provided password matches the stored hash
 - `get_id()`: Return the user ID for Flask-Login
+
+## MongoDB Schema
+
+The library uses the following schema for the users collection:
+
+```javascript
+{
+  "_id": ObjectId("..."),
+  "username": "user@example.com",
+  "password_hash": "pbkdf2:sha256:...",
+  "created_by": "admin@example.com",
+  "created_at": ISODate("2025-05-09T12:00:00Z"),
+  "is_active": true,
+  "role": "admin", // or "user", etc.
+  "last_password_change": ISODate("2025-05-09T12:00:00Z"),
+  "account_id": "550e8400-e29b-41d4-a716-446655440000",
+  "login_attempts": 0,
+  "creation_ip": "192.168.1.1",
+  "mfa_enabled": true,
+  "last_login": ISODate("2025-05-09T12:00:00Z"),
+  "email_verified": true,
+  "reset_token": null,
+  "reset_token_expires": null
+}
+```
 
 ## Advanced Usage
 

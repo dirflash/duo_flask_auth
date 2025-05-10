@@ -1,0 +1,98 @@
+<!-- templates/security_check.html -->
+{% extends "base.html" %} {% block title %}Security Check - Flask App with Duo
+MFA{% endblock %} {% block styles %}
+<style>
+  .security-check {
+    margin-top: 20px;
+  }
+  .issue-card {
+    margin-bottom: 20px;
+    padding: 15px;
+    border-radius: 5px;
+    border-left: 5px solid;
+  }
+  .issue-card.high {
+    background-color: #ffebee;
+    border-left-color: #f44336;
+  }
+  .issue-card.medium {
+    background-color: #fff3e0;
+    border-left-color: #ff9800;
+  }
+  .issue-card.low {
+    background-color: #e8f5e9;
+    border-left-color: #4caf50;
+  }
+  .issue-card h3 {
+    margin-top: 0;
+    color: #333;
+  }
+  .issue-card p {
+    margin-bottom: 15px;
+  }
+  .issue-card .btn {
+    display: inline-block;
+    padding: 8px 12px;
+    border-radius: 3px;
+    text-decoration: none;
+    color: white;
+    background-color: #2196f3;
+  }
+  .issue-card .btn:hover {
+    background-color: #0b7dda;
+  }
+  .security-status {
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 5px;
+  }
+  .status-good {
+    background-color: #e8f5e9;
+    border: 1px solid #c8e6c9;
+    color: #2e7d32;
+  }
+  .status-issues {
+    background-color: #fff3e0;
+    border: 1px solid #ffe0b2;
+    color: #e65100;
+  }
+</style>
+{% endblock %} {% block content %}
+<h1>Security Check</h1>
+
+<div class="security-check">
+  {% if issues %}
+  <div class="security-status status-issues">
+    <h2>Security Issues Found</h2>
+    <p>
+      We've identified {{ issues|length }} security issue(s) with your account.
+      Please review the recommendations below to improve your account security.
+    </p>
+  </div>
+
+  {% for issue in issues %}
+  <div class="issue-card {{ issue.severity }}">
+    <h3>{{ issue.issue }}</h3>
+    <p>{{ issue.recommendation }}</p>
+    <a href="{{ issue.action_url }}" class="btn">Fix Issue</a>
+  </div>
+  {% endfor %} {% else %}
+  <div class="security-status status-good">
+    <h2>Your Account Is Secure</h2>
+    <p>
+      We didn't find any security issues with your account. Keep up the good
+      security practices!
+    </p>
+  </div>
+
+  <h3>Security Best Practices</h3>
+  <ul>
+    <li>Use a strong, unique password</li>
+    <li>Enable multi-factor authentication</li>
+    <li>Regularly review your account activity</li>
+    <li>Keep your contact information up-to-date</li>
+    <li>Be cautious of phishing attempts</li>
+  </ul>
+  {% endif %}
+</div>
+{% endblock %}
