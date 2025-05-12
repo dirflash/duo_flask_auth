@@ -14,7 +14,7 @@ from werkzeug.security import generate_password_hash
 # Add parent directory to path to allow direct imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Direct imports from modules (avoiding __init__.py)
+# Direct imports from specific modules
 from duo_flask_auth import DuoFlaskAuth
 from duo_flask_auth.cache import MemoryCache, NoCache
 

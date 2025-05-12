@@ -1,4 +1,681 @@
-def login(self):
+"""
+Main class for the Duo Flask Auth library with flexibility enhancements.
+
+This module provides the DuoFlaskAuth class, which handles authentication,
+Duo MFA integration, and security features with support for different
+database backends and customizable routes.
+"""
+
+import logging
+import re
+import time
+import uuid
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Tuple, Callable, Type, Union
+
+import certifi
+
+# Import Duo Universal SDK
+from duo_universal.client import Client, DuoException
+from flask import Blueprint, Flask, current_app, flash, redirect, render_template, request, session, url_for
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    current_user,
+    login_required,
+    login_user,
+    logout_user,
+)
+from flask_wtf.csrf import CSRFProtect
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from .db_adapters import DatabaseAdapter, get_db_adapter
+from .user_model import BaseUser, get_user_factory
+from .exceptions import (
+    AuthError,
+    InvalidCredentialsError,
+    AccountLockedError,
+    MFARequiredError,
+    RateLimitedError,
+    PasswordPolicyError,
+    TokenInvalidError,
+    PermissionDeniedError
+)
+
+
+class DuoFlaskAuth:
+    """
+    Flask authentication library with Duo MFA support and enhanced flexibility.
+
+    This class provides authentication functionality with optional Duo MFA integration
+    for Flask applications, with support for different database backends,
+    customizable routes, and user models.
+    """
+
+    def __init__(
+        self,
+        app: Optional[Flask] = None,
+        db_config: Optional[Dict[str, Any]] = None,
+        db_adapter: Optional[Union[str, DatabaseAdapter]] = None,
+        duo_config: Optional[Dict[str, Any]] = None,
+        template_folder: str = 'templates',
+        routes_prefix: str = '/auth',
+        user_model: str = 'default',
+        rate_limit_config: Optional[Dict[str, Any]] = None,
+        account_lockout_config: Optional[Dict[str, Any]] = None,
+        password_policy: Optional[Dict[str, Any]] = None,
+        cache_config: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Initialize the DuoFlaskAuth extension.
+
+        Args:
+            app: The Flask application to initialize with.
+            db_config: Database connection configuration.
+            db_adapter: Database adapter type ('mongodb', 'sqlalchemy') or instance.
+            duo_config: Duo MFA configuration.
+            template_folder: Folder for auth templates.
+            routes_prefix: Prefix for authentication routes.
+            user_model: User model type.
+            rate_limit_config: Configuration for rate limiting.
+            account_lockout_config: Configuration for account lockout.
+            password_policy: Configuration for password policies.
+        """
+        self.login_manager = LoginManager()
+        self.db_config = db_config or {}
+        self.duo_config = duo_config or {}
+        self.template_folder = template_folder
+        self.routes_prefix = routes_prefix
+        self.user_model = user_model
+        self.duo_client = None
+        self.csrf = CSRFProtect()
+
+        # Configure caching
+        self.cache_config = cache_config or {
+            "enabled": True,
+            "type": "memory",
+            "default_ttl": 300,    # 5 minutes default TTL
+            "user_ttl": 60,        # 1 minute for user data
+            "security_events_ttl": 300,  # 5 minutes for security events
+            "cleanup_interval": 60  # Clean up expired entries every minute
+        }
+
+        # Create cache instance based on configuration
+        if self.cache_config.get("enabled", True):
+            if self.cache_config.get("type", "memory") == "memory":
+                self.cache = MemoryCache(
+                    default_ttl=self.cache_config.get("default_ttl", 300),
+                    cleanup_interval=self.cache_config.get("cleanup_interval", 60)
+                )
+                self.logger.info("Initialized memory cache")
+            else:
+                # Default to memory cache if type is not recognized
+                self.cache = MemoryCache(default_ttl=self.cache_config.get("default_ttl", 300))
+                self.logger.info(f"Unrecognized cache type '{self.cache_config.get('type')}', falling back to memory cache")
+        else:
+            # Use dummy cache if caching is disabled
+            self.cache = NoCache()
+            self.logger.info("Caching is disabled")
+
+        # Initialize database adapter
+        if isinstance(db_adapter, DatabaseAdapter):
+            self.db_adapter = db_adapter
+        elif isinstance(db_adapter, str):
+            self.db_adapter = get_db_adapter(db_adapter, self.db_config)
+        elif db_config:
+            # Default to MongoDB if not specified but config is provided
+            self.db_adapter = get_db_adapter('mongodb', self.db_config)
+        else:
+            self.db_adapter = None
+
+        # Get user factory
+        self.user_factory = get_user_factory(user_model)
+
+        # Create blueprint with specified route prefix
+        self.blueprint = Blueprint('duo_flask_auth', __name__,
+                                  url_prefix=routes_prefix,
+                                  template_folder=template_folder)
+
+        # Rate limiting configuration
+        self.rate_limit_config = rate_limit_config or {
+            "enabled": True,
+            "max_attempts": {
+                "login": 5,       # 5 attempts
+                "password_reset": 3  # 3 attempts
+            },
+            "window_seconds": {
+                "login": 300,        # 5 minutes
+                "password_reset": 600   # 10 minutes
+            }
+        }
+
+        # Account lockout configuration
+        self.account_lockout_config = account_lockout_config or {
+            "enabled": True,
+            "max_attempts": 5,      # Lock after 5 failed attempts
+            "lockout_duration": 1800,  # 30 minutes
+            "lockout_reset_on_success": True
+        }
+
+        # Password policy configuration
+        self.password_policy = password_policy or {
+            "min_length": 8,
+            "require_upper": True,
+            "require_lower": True,
+            "require_digit": True,
+            "require_special": False,
+            "max_age_days": 90,   # Maximum password age
+            "prevent_common": True,  # Prevent common passwords
+            "common_passwords": ["Password123", "Admin123", "Welcome123"]  # Example list
+        }
+
+        # Set up in-memory rate limiting storage
+        # In a production environment, this should be replaced with Redis or similar
+        self._rate_limit_store = {}
+
+        # Configure logger
+        self.logger = logging.getLogger("duo_flask_auth")
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
+
+        self._setup_routes()
+
+        if app is not None:
+            self.init_app(app)
+
+    def init_app(self, app: Flask) -> None:
+        """
+        Initialize the extension with the given Flask application.
+
+        Args:
+            app: The Flask application to initialize with.
+
+        Raises:
+            ValueError: If required configuration is missing.
+        """
+        # Validate configuration
+        if self.db_adapter is None and not self.db_config:
+            self.logger.warning("No database configuration provided - some features will be unavailable")
+
+        # Validate Duo configuration if provided
+        if self.duo_config:
+            required_duo_keys = ['client_id', 'client_secret', 'api_host', 'redirect_uri']
+            for key in required_duo_keys:
+                if key not in self.duo_config:
+                    raise ValueError(f"Missing required Duo configuration key: {key}")
+
+        if not hasattr(app, 'extensions'):
+            app.extensions = {}
+        app.extensions['duo_flask_auth'] = self
+
+        # Set up CSRF protection
+        self.csrf.init_app(app)
+
+        # Set up the login manager
+        self.login_manager.init_app(app)
+        self.login_manager.login_view = "duo_flask_auth.login"
+        self.login_manager.login_message = "Please log in to access this page."
+        self.login_manager.login_message_category = "info"
+
+        # Set up the database adapter if provided
+        if self.db_adapter:
+            self.db_adapter.initialize(app)
+
+            # Verify database indexes after initialization
+            # This ensures all necessary indexes exist
+            if hasattr(self.db_adapter, 'verify_indexes'):
+                @app.before_first_request
+                def verify_database_indexes():
+                    try:
+                        app.logger.info("Verifying database indexes...")
+                        index_status = self.db_adapter.verify_indexes()
+
+                        # Log any missing indexes
+                        missing_indexes = [name for name, exists in index_status.items() if not exists]
+                        if missing_indexes:
+                            app.logger.warning(f"Missing database indexes: {', '.join(missing_indexes)}")
+                        else:
+                            app.logger.info("All database indexes are correctly configured")
+                    except Exception as e:
+                        app.logger.error(f"Error verifying database indexes: {e}")
+
+        # Set up the Duo client if provided
+        if self.duo_config:
+            self._setup_duo_client(app)
+
+        # Register the user loader
+        @self.login_manager.user_loader
+        def load_user(user_id):
+            return self.load_user(user_id)
+
+        # Register the blueprint with the app
+        app.register_blueprint(self.blueprint)
+
+        self.logger.info(f"DuoFlaskAuth initialized with routes at {self.routes_prefix}")
+
+    def _setup_duo_client(self, app: Flask) -> None:
+        """
+        Set up Duo MFA client.
+
+        Args:
+            app: The Flask application.
+        """
+        # Extract Duo configuration
+        client_id = self.duo_config.get('client_id')
+        client_secret = self.duo_config.get('client_secret')
+        api_host = self.duo_config.get('api_host')
+        redirect_uri = self.duo_config.get('redirect_uri')
+
+        # Initialize Duo client if all required parameters are provided
+        if all([client_id, client_secret, api_host, redirect_uri]):
+            try:
+                self.duo_client = Client(
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    host=api_host,
+                    redirect_uri=redirect_uri,
+                )
+                app.logger.info("Duo MFA client initialized")
+            except ImportError:
+                app.logger.error("Failed to import Duo Universal SDK. Install it with: pip install duo-universal")
+            except Exception as e:
+                app.logger.error(f"Error initializing Duo client: {e}")
+        else:
+            app.logger.warning(
+                "Duo MFA not fully configured. Some parameters are missing."
+            )
+
+    def _setup_routes(self) -> None:
+        """Set up authentication routes on the blueprint."""
+        self.blueprint.route('/login/', methods=['GET', 'POST'])(self.login)
+        self.blueprint.route('/duo-callback')(self.duo_callback)
+        self.blueprint.route('/logout')(self.logout)
+        self.blueprint.route('/enable-mfa', methods=['GET', 'POST'])(self.enable_mfa)
+        self.blueprint.route('/disable-mfa', methods=['GET', 'POST'])(self.disable_mfa)
+        self.blueprint.route('/add-user/<username>/<password>', methods=['GET', 'POST'])(self.add_user)
+        self.blueprint.route('/unlock-account/<username>', methods=['GET', 'POST'])(self.unlock_account)
+        self.blueprint.route('/password-expired', methods=['GET', 'POST'])(self.password_expired)
+        self.blueprint.route('/forgot-password', methods=['GET', 'POST'])(self.forgot_password)
+        self.blueprint.route('/reset-password/<username>/<token>', methods=['GET', 'POST'])(self.reset_password)
+        self.blueprint.route('/login-success')(self.login_success)
+
+    def load_user(self, user_id: str) -> Optional[BaseUser]:
+        """
+        Load a user from the database or cache by their user ID.
+
+        Args:
+            user_id: The ID of the user to load (typically the username).
+
+        Returns:
+            A User object if the user is found, otherwise None.
+        """
+        current_app.logger.debug(f"Loading user: {user_id}")
+
+        if not self.db_adapter:
+            current_app.logger.error("Database adapter not configured")
+            return None
+
+        # Try to get user from cache first
+        cache_key = f"user:{user_id}"
+        cached_user = self.cache.get(cache_key)
+
+        if cached_user:
+            current_app.logger.debug(f"User '{user_id}' loaded from cache")
+
+            # Check if password has expired (we always do this check even with cached data)
+            if self._is_password_expired(cached_user):
+                cached_user['password_expired'] = True
+
+            # Create a User object with the cached data
+            try:
+                user = self.user_factory(cached_user)
+                return user
+            except Exception as e:
+                current_app.logger.error(f"Error creating user object from cache: {e}")
+                # Fall through to database lookup
+
+        # User not in cache, get from database
+        current_app.logger.debug(f"User '{user_id}' not found in cache, querying database")
+        user_data = self.db_adapter.get_user(user_id)
+
+        if not user_data:
+            current_app.logger.debug(f"User '{user_id}' not found in database")
+            return None
+
+        # Check if password has expired
+        if self._is_password_expired(user_data):
+            user_data['password_expired'] = True
+
+        # Cache the user data
+        user_ttl = self.cache_config.get("user_ttl", 60)
+        self.cache.set(cache_key, user_data, ttl=user_ttl)
+        current_app.logger.debug(f"User '{user_id}' cached with TTL of {user_ttl}s")
+
+        # Create a User object with the data from the database
+        try:
+            user = self.user_factory(user_data)
+            return user
+        except Exception as e:
+            current_app.logger.error(f"Error creating user object: {e}")
+            return None
+
+    def is_valid_email(self, email: str) -> bool:
+        """
+        Validate email format using regex.
+
+        Args:
+            email: The email to validate
+
+        Returns:
+            True if valid email format, False otherwise
+        """
+        # Basic email validation pattern
+        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        return bool(re.match(pattern, email))
+
+    def _is_rate_limited(self, key: str, action: str) -> bool:
+        """
+        Check if an action from a key (IP or username) is rate limited.
+
+        Args:
+            key: The key to check (IP address or username)
+            action: The action to check (login, password_reset, etc.)
+
+        Returns:
+            True if rate limited, False otherwise
+        """
+        if not self.rate_limit_config.get("enabled", True):
+            return False
+
+        # Get the maximum attempts and window for this action
+        max_attempts = self.rate_limit_config.get("max_attempts", {}).get(action, 5)
+        window_seconds = self.rate_limit_config.get("window_seconds", {}).get(action, 300)
+
+        # Create a composite key
+        cache_key = f"{key}:{action}"
+
+        # Get the current time
+        now = time.time()
+
+        # Check if the key exists in the store
+        if cache_key not in self._rate_limit_store:
+            # If not, create a new entry
+            self._rate_limit_store[cache_key] = {
+                "attempts": 1,
+                "first_attempt": now,
+                "last_attempt": now
+            }
+            return False
+
+        # Get the entry
+        entry = self._rate_limit_store[cache_key]
+
+        # Check if the entry has expired
+        if now - entry["first_attempt"] > window_seconds:
+            # If so, reset it
+            entry["attempts"] = 1
+            entry["first_attempt"] = now
+            entry["last_attempt"] = now
+            return False
+
+        # Update the last attempt time
+        entry["last_attempt"] = now
+
+        # Increment the attempt counter
+        entry["attempts"] += 1
+
+        # Check if the maximum attempts have been exceeded
+        return entry["attempts"] > max_attempts
+
+    def _reset_rate_limit(self, key: str, action: str) -> None:
+        """
+        Reset the rate limit for a key and action.
+
+        Args:
+            key: The key to reset (IP address or username)
+            action: The action to reset (login, password_reset, etc.)
+        """
+        cache_key = f"{key}:{action}"
+        if cache_key in self._rate_limit_store:
+            del self._rate_limit_store[cache_key]
+
+    def _check_account_lockout(self, username: str) -> Tuple[bool, Optional[str]]:
+        """
+        Check if an account is locked.
+
+        Args:
+            username: The username to check
+
+        Returns:
+            Tuple containing:
+              - Boolean indicating if the account is locked
+              - Optional reason for lockout
+        """
+        if not self.account_lockout_config.get("enabled", True) or not self.db_adapter:
+            return False, None
+
+        # Get user data
+        user_data = self.db_adapter.get_user(username)
+
+        if not user_data:
+            return False, None
+
+        # Check if account is explicitly inactive
+        if not user_data.get("is_active", True):
+            return True, "Account is deactivated"
+
+        # Check if there's a lockout timestamp and it's in the future
+        locked_until = user_data.get("locked_until")
+        if locked_until and isinstance(locked_until, datetime) and locked_until > datetime.utcnow():
+            return True, f"Account is locked until {locked_until}"
+
+        # Check if too many failed attempts
+        login_attempts = user_data.get("login_attempts", 0)
+        max_attempts = self.account_lockout_config.get("max_attempts", 5)
+
+        if login_attempts >= max_attempts:
+            # Lock the account
+            lockout_duration = self.account_lockout_config.get("lockout_duration", 1800)  # 30 minutes
+            locked_until = datetime.utcnow() + timedelta(seconds=lockout_duration)
+
+            # Update the user record
+            self.db_adapter.update_user(
+                username,
+                {"locked_until": locked_until}
+            )
+
+            return True, f"Account is locked until {locked_until}"
+
+        return False, None
+
+    def _unlock_account(self, username: str) -> bool:
+        """
+        Unlock an account and invalidate cache.
+
+        Args:
+            username: The username to unlock
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.db_adapter:
+            self.logger.error("Database adapter not configured")
+            return False
+
+        try:
+            # Reset login attempts and clear lockout
+            result = self.db_adapter.update_user(
+                username,
+                {
+                    "login_attempts": 0,
+                    "locked_until": None
+                }
+            )
+
+            if result:
+                # Invalidate cache for this user
+                cache_key = f"user:{username}"
+                self.cache.delete(cache_key)
+                self.logger.debug(f"Invalidated cache for user '{username}' after unlocking account")
+
+            self.logger.info(f"Account unlocked for user: {username}")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error unlocking account for user '{username}': {e}")
+            return False
+
+    def _is_password_expired(self, user_data: Dict[str, Any]) -> bool:
+        """
+        Check if a user's password has expired.
+
+        Args:
+            user_data: The user data from the database
+
+        Returns:
+            True if the password has expired, False otherwise
+        """
+        # Check if password expiration is enabled
+        max_age_days = self.password_policy.get("max_age_days")
+        if not max_age_days:
+            return False
+
+        # Check if there's a last password change timestamp
+        last_password_change = user_data.get("last_password_change")
+        if not last_password_change or not isinstance(last_password_change, datetime):
+            return False
+
+        # Check if the password is older than the maximum age
+        password_age = (datetime.utcnow() - last_password_change).days
+        return password_age > max_age_days
+
+    def _validate_password(self, password: str) -> Tuple[bool, Optional[str]]:
+        """
+        Validate a password against the password policy.
+
+        Args:
+            password: The password to validate
+
+        Returns:
+            Tuple containing:
+              - Boolean indicating if the password is valid
+              - Optional reason why the password is invalid
+        """
+        # Check length
+        min_length = self.password_policy.get("min_length", 8)
+        if len(password) < min_length:
+            return False, f"Password must be at least {min_length} characters long"
+
+        # Check for uppercase letters
+        if self.password_policy.get("require_upper", True) and not any(c.isupper() for c in password):
+            return False, "Password must contain at least one uppercase letter"
+
+        # Check for lowercase letters
+        if self.password_policy.get("require_lower", True) and not any(c.islower() for c in password):
+            return False, "Password must contain at least one lowercase letter"
+
+        # Check for digits
+        if self.password_policy.get("require_digit", True) and not any(c.isdigit() for c in password):
+            return False, "Password must contain at least one digit"
+
+        # Check for special characters
+        if self.password_policy.get("require_special", False) and not any(c in "!@#$%^&*()-_=+[]{}|;:,.<>?/" for c in password):
+            return False, "Password must contain at least one special character"
+
+        # Check for common passwords
+        if self.password_policy.get("prevent_common", True):
+            common_passwords = self.password_policy.get("common_passwords", [])
+            if password in common_passwords:
+                return False, "Password is too common"
+
+        return True, None
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics.
+
+        Returns:
+            Dictionary with cache statistics
+        """
+        stats = self.cache.get_stats()
+        return {
+            "hits": stats.hits,
+            "misses": stats.misses,
+            "sets": stats.sets,
+            "deletes": stats.deletes,
+            "clears": stats.clears,
+            "hit_rate": stats.hit_rate,
+            "active_keys": len(self.cache.get_keys()) if hasattr(self.cache, 'get_keys') else 0,
+            "enabled": self.cache_config.get("enabled", True),
+            "type": self.cache_config.get("type", "memory")
+        }
+
+    def check_database_indexes(self) -> Dict[str, Any]:
+        """
+        Check the health of the database indexes.
+
+        This method ensures all required indexes exist and are correctly configured.
+        It's useful to run during application startup or as part of health checks.
+
+        Returns:
+            Dictionary with information about the database indexes status.
+        """
+        if not self.db_adapter:
+            self.logger.error("Database adapter not configured")
+            return {"error": "Database adapter not configured"}
+
+        # Only MongoDB adapter currently supports index verification
+        if hasattr(self.db_adapter, 'verify_indexes'):
+            try:
+                # Call the adapter's verify_indexes method
+                index_status = self.db_adapter.verify_indexes()
+
+                # Calculate the percentage of indexes that exist
+                total_indexes = len(index_status)
+                existing_indexes = sum(1 for exists in index_status.values() if exists)
+
+                if total_indexes > 0:
+                    health_percentage = (existing_indexes / total_indexes) * 100
+                else:
+                    health_percentage = 0
+
+                # Determine overall health status
+                if health_percentage == 100:
+                    health_status = "healthy"
+                elif health_percentage >= 80:
+                    health_status = "warning"
+                else:
+                    health_status = "critical"
+
+                # Build the result
+                result = {
+                    "status": health_status,
+                    "health_percentage": health_percentage,
+                    "total_indexes": total_indexes,
+                    "existing_indexes": existing_indexes,
+                    "missing_indexes": [name for name, exists in index_status.items() if not exists],
+                    "index_details": index_status
+                }
+
+                # Log the result
+                self.logger.info(f"Database indexes health check: {health_status} ({health_percentage:.1f}%)")
+                if result["missing_indexes"]:
+                    self.logger.warning(f"Missing indexes: {', '.join(result['missing_indexes'])}")
+
+                return result
+
+            except Exception as e:
+                self.logger.error(f"Error checking database indexes: {e}")
+                return {"error": str(e)}
+        else:
+            self.logger.warning("Database adapter does not support index verification")
+            return {"error": "Database adapter does not support index verification"}
+
+
+    def login(self):
         """
         Handle user login with Duo MFA, rate limiting, and account lockout.
 
@@ -551,7 +1228,7 @@ def login(self):
         except Exception as e:
             current_app.logger.error(f"Error enabling MFA: {e}")
             flash("An error occurred while enabling MFA. Please try again.", "error")
-            return redirect(url_for("duo_flask_auth.login_success")
+            return redirect(url_for("duo_flask_auth.login_success"))
 
     @login_required
     def disable_mfa(self):
@@ -1291,677 +1968,4 @@ def login(self):
         # Check rate limiting for password resets
         ip_address = request.remote_addr
         if self._is_rate_limited(ip_address,"""
-Main class for the Duo Flask Auth library with flexibility enhancements.
 
-This module provides the DuoFlaskAuth class, which handles authentication,
-Duo MFA integration, and security features with support for different
-database backends and customizable routes.
-"""
-
-import logging
-import re
-import time
-import uuid
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple, Callable, Type, Union
-
-import certifi
-
-# Import Duo Universal SDK
-from duo_universal.client import Client, DuoException
-from flask import Blueprint, Flask, current_app, flash, redirect, render_template, request, session, url_for
-from flask_login import (
-    LoginManager,
-    UserMixin,
-    current_user,
-    login_required,
-    login_user,
-    logout_user,
-)
-from flask_wtf.csrf import CSRFProtect
-from werkzeug.security import check_password_hash, generate_password_hash
-
-from .db_adapters import DatabaseAdapter, get_db_adapter
-from .user_model import BaseUser, get_user_factory
-from .exceptions import (
-    AuthError,
-    InvalidCredentialsError,
-    AccountLockedError,
-    MFARequiredError,
-    RateLimitedError,
-    PasswordPolicyError,
-    TokenInvalidError,
-    PermissionDeniedError
-)
-
-
-class DuoFlaskAuth:
-    """
-    Flask authentication library with Duo MFA support and enhanced flexibility.
-
-    This class provides authentication functionality with optional Duo MFA integration
-    for Flask applications, with support for different database backends,
-    customizable routes, and user models.
-    """
-
-    def __init__(
-        self,
-        app: Optional[Flask] = None,
-        db_config: Optional[Dict[str, Any]] = None,
-        db_adapter: Optional[Union[str, DatabaseAdapter]] = None,
-        duo_config: Optional[Dict[str, Any]] = None,
-        template_folder: str = 'templates',
-        routes_prefix: str = '/auth',
-        user_model: str = 'default',
-        rate_limit_config: Optional[Dict[str, Any]] = None,
-        account_lockout_config: Optional[Dict[str, Any]] = None,
-        password_policy: Optional[Dict[str, Any]] = None,
-        cache_config: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Initialize the DuoFlaskAuth extension.
-
-        Args:
-            app: The Flask application to initialize with.
-            db_config: Database connection configuration.
-            db_adapter: Database adapter type ('mongodb', 'sqlalchemy') or instance.
-            duo_config: Duo MFA configuration.
-            template_folder: Folder for auth templates.
-            routes_prefix: Prefix for authentication routes.
-            user_model: User model type.
-            rate_limit_config: Configuration for rate limiting.
-            account_lockout_config: Configuration for account lockout.
-            password_policy: Configuration for password policies.
-        """
-        self.login_manager = LoginManager()
-        self.db_config = db_config or {}
-        self.duo_config = duo_config or {}
-        self.template_folder = template_folder
-        self.routes_prefix = routes_prefix
-        self.user_model = user_model
-        self.duo_client = None
-        self.csrf = CSRFProtect()
-
-        # Configure caching
-        self.cache_config = cache_config or {
-            "enabled": True,
-            "type": "memory",
-            "default_ttl": 300,    # 5 minutes default TTL
-            "user_ttl": 60,        # 1 minute for user data
-            "security_events_ttl": 300,  # 5 minutes for security events
-            "cleanup_interval": 60  # Clean up expired entries every minute
-        }
-
-        # Create cache instance based on configuration
-        if self.cache_config.get("enabled", True):
-            if self.cache_config.get("type", "memory") == "memory":
-                self.cache = MemoryCache(
-                    default_ttl=self.cache_config.get("default_ttl", 300),
-                    cleanup_interval=self.cache_config.get("cleanup_interval", 60)
-                )
-                self.logger.info("Initialized memory cache")
-            else:
-                # Default to memory cache if type is not recognized
-                self.cache = MemoryCache(default_ttl=self.cache_config.get("default_ttl", 300))
-                self.logger.info(f"Unrecognized cache type '{self.cache_config.get('type')}', falling back to memory cache")
-        else:
-            # Use dummy cache if caching is disabled
-            self.cache = NoCache()
-            self.logger.info("Caching is disabled")
-
-        # Initialize database adapter
-        if isinstance(db_adapter, DatabaseAdapter):
-            self.db_adapter = db_adapter
-        elif isinstance(db_adapter, str):
-            self.db_adapter = get_db_adapter(db_adapter, self.db_config)
-        elif db_config:
-            # Default to MongoDB if not specified but config is provided
-            self.db_adapter = get_db_adapter('mongodb', self.db_config)
-        else:
-            self.db_adapter = None
-
-        # Get user factory
-        self.user_factory = get_user_factory(user_model)
-
-        # Create blueprint with specified route prefix
-        self.blueprint = Blueprint('duo_flask_auth', __name__,
-                                  url_prefix=routes_prefix,
-                                  template_folder=template_folder)
-
-        # Rate limiting configuration
-        self.rate_limit_config = rate_limit_config or {
-            "enabled": True,
-            "max_attempts": {
-                "login": 5,       # 5 attempts
-                "password_reset": 3  # 3 attempts
-            },
-            "window_seconds": {
-                "login": 300,        # 5 minutes
-                "password_reset": 600   # 10 minutes
-            }
-        }
-
-        # Account lockout configuration
-        self.account_lockout_config = account_lockout_config or {
-            "enabled": True,
-            "max_attempts": 5,      # Lock after 5 failed attempts
-            "lockout_duration": 1800,  # 30 minutes
-            "lockout_reset_on_success": True
-        }
-
-        # Password policy configuration
-        self.password_policy = password_policy or {
-            "min_length": 8,
-            "require_upper": True,
-            "require_lower": True,
-            "require_digit": True,
-            "require_special": False,
-            "max_age_days": 90,   # Maximum password age
-            "prevent_common": True,  # Prevent common passwords
-            "common_passwords": ["Password123", "Admin123", "Welcome123"]  # Example list
-        }
-
-        # Set up in-memory rate limiting storage
-        # In a production environment, this should be replaced with Redis or similar
-        self._rate_limit_store = {}
-
-        # Configure logger
-        self.logger = logging.getLogger("duo_flask_auth")
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
-        self.logger.setLevel(logging.INFO)
-
-        self._setup_routes()
-
-        if app is not None:
-            self.init_app(app)
-
-    def init_app(self, app: Flask) -> None:
-        """
-        Initialize the extension with the given Flask application.
-
-        Args:
-            app: The Flask application to initialize with.
-
-        Raises:
-            ValueError: If required configuration is missing.
-        """
-        # Validate configuration
-        if self.db_adapter is None and not self.db_config:
-            self.logger.warning("No database configuration provided - some features will be unavailable")
-
-        # Validate Duo configuration if provided
-        if self.duo_config:
-            required_duo_keys = ['client_id', 'client_secret', 'api_host', 'redirect_uri']
-            for key in required_duo_keys:
-                if key not in self.duo_config:
-                    raise ValueError(f"Missing required Duo configuration key: {key}")
-
-        if not hasattr(app, 'extensions'):
-            app.extensions = {}
-        app.extensions['duo_flask_auth'] = self
-
-        # Set up CSRF protection
-        self.csrf.init_app(app)
-
-        # Set up the login manager
-        self.login_manager.init_app(app)
-        self.login_manager.login_view = "duo_flask_auth.login"
-        self.login_manager.login_message = "Please log in to access this page."
-        self.login_manager.login_message_category = "info"
-
-        # Set up the database adapter if provided
-        if self.db_adapter:
-            self.db_adapter.initialize(app)
-
-            # Verify database indexes after initialization
-            # This ensures all necessary indexes exist
-            if hasattr(self.db_adapter, 'verify_indexes'):
-                @app.before_first_request
-                def verify_database_indexes():
-                    try:
-                        app.logger.info("Verifying database indexes...")
-                        index_status = self.db_adapter.verify_indexes()
-
-                        # Log any missing indexes
-                        missing_indexes = [name for name, exists in index_status.items() if not exists]
-                        if missing_indexes:
-                            app.logger.warning(f"Missing database indexes: {', '.join(missing_indexes)}")
-                        else:
-                            app.logger.info("All database indexes are correctly configured")
-                    except Exception as e:
-                        app.logger.error(f"Error verifying database indexes: {e}")
-
-        # Set up the Duo client if provided
-        if self.duo_config:
-            self._setup_duo_client(app)
-
-        # Register the user loader
-        @self.login_manager.user_loader
-        def load_user(user_id):
-            return self.load_user(user_id)
-
-        # Register the blueprint with the app
-        app.register_blueprint(self.blueprint)
-
-        self.logger.info(f"DuoFlaskAuth initialized with routes at {self.routes_prefix}")
-
-    def _setup_duo_client(self, app: Flask) -> None:
-        """
-        Set up Duo MFA client.
-
-        Args:
-            app: The Flask application.
-        """
-        # Extract Duo configuration
-        client_id = self.duo_config.get('client_id')
-        client_secret = self.duo_config.get('client_secret')
-        api_host = self.duo_config.get('api_host')
-        redirect_uri = self.duo_config.get('redirect_uri')
-
-        # Initialize Duo client if all required parameters are provided
-        if all([client_id, client_secret, api_host, redirect_uri]):
-            try:
-                self.duo_client = Client(
-                    client_id=client_id,
-                    client_secret=client_secret,
-                    host=api_host,
-                    redirect_uri=redirect_uri,
-                )
-                app.logger.info("Duo MFA client initialized")
-            except ImportError:
-                app.logger.error("Failed to import Duo Universal SDK. Install it with: pip install duo-universal")
-            except Exception as e:
-                app.logger.error(f"Error initializing Duo client: {e}")
-        else:
-            app.logger.warning(
-                "Duo MFA not fully configured. Some parameters are missing."
-            )
-
-    def _setup_routes(self) -> None:
-        """Set up authentication routes on the blueprint."""
-        self.blueprint.route('/login/', methods=['GET', 'POST'])(self.login)
-        self.blueprint.route('/duo-callback')(self.duo_callback)
-        self.blueprint.route('/logout')(self.logout)
-        self.blueprint.route('/enable-mfa', methods=['GET', 'POST'])(self.enable_mfa)
-        self.blueprint.route('/disable-mfa', methods=['GET', 'POST'])(self.disable_mfa)
-        self.blueprint.route('/add-user/<username>/<password>', methods=['GET', 'POST'])(self.add_user)
-        self.blueprint.route('/unlock-account/<username>', methods=['GET', 'POST'])(self.unlock_account)
-        self.blueprint.route('/password-expired', methods=['GET', 'POST'])(self.password_expired)
-        self.blueprint.route('/forgot-password', methods=['GET', 'POST'])(self.forgot_password)
-        self.blueprint.route('/reset-password/<username>/<token>', methods=['GET', 'POST'])(self.reset_password)
-        self.blueprint.route('/login-success')(self.login_success)
-
-    def load_user(self, user_id: str) -> Optional[BaseUser]:
-        """
-        Load a user from the database or cache by their user ID.
-
-        Args:
-            user_id: The ID of the user to load (typically the username).
-
-        Returns:
-            A User object if the user is found, otherwise None.
-        """
-        current_app.logger.debug(f"Loading user: {user_id}")
-
-        if not self.db_adapter:
-            current_app.logger.error("Database adapter not configured")
-            return None
-
-        # Try to get user from cache first
-        cache_key = f"user:{user_id}"
-        cached_user = self.cache.get(cache_key)
-
-        if cached_user:
-            current_app.logger.debug(f"User '{user_id}' loaded from cache")
-
-            # Check if password has expired (we always do this check even with cached data)
-            if self._is_password_expired(cached_user):
-                cached_user['password_expired'] = True
-
-            # Create a User object with the cached data
-            try:
-                user = self.user_factory(cached_user)
-                return user
-            except Exception as e:
-                current_app.logger.error(f"Error creating user object from cache: {e}")
-                # Fall through to database lookup
-
-        # User not in cache, get from database
-        current_app.logger.debug(f"User '{user_id}' not found in cache, querying database")
-        user_data = self.db_adapter.get_user(user_id)
-
-        if not user_data:
-            current_app.logger.debug(f"User '{user_id}' not found in database")
-            return None
-
-        # Check if password has expired
-        if self._is_password_expired(user_data):
-            user_data['password_expired'] = True
-
-        # Cache the user data
-        user_ttl = self.cache_config.get("user_ttl", 60)
-        self.cache.set(cache_key, user_data, ttl=user_ttl)
-        current_app.logger.debug(f"User '{user_id}' cached with TTL of {user_ttl}s")
-
-        # Create a User object with the data from the database
-        try:
-            user = self.user_factory(user_data)
-            return user
-        except Exception as e:
-            current_app.logger.error(f"Error creating user object: {e}")
-            return None
-
-    def is_valid_email(self, email: str) -> bool:
-        """
-        Validate email format using regex.
-
-        Args:
-            email: The email to validate
-
-        Returns:
-            True if valid email format, False otherwise
-        """
-        # Basic email validation pattern
-        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        return bool(re.match(pattern, email))
-
-    def _is_rate_limited(self, key: str, action: str) -> bool:
-        """
-        Check if an action from a key (IP or username) is rate limited.
-
-        Args:
-            key: The key to check (IP address or username)
-            action: The action to check (login, password_reset, etc.)
-
-        Returns:
-            True if rate limited, False otherwise
-        """
-        if not self.rate_limit_config.get("enabled", True):
-            return False
-
-        # Get the maximum attempts and window for this action
-        max_attempts = self.rate_limit_config.get("max_attempts", {}).get(action, 5)
-        window_seconds = self.rate_limit_config.get("window_seconds", {}).get(action, 300)
-
-        # Create a composite key
-        cache_key = f"{key}:{action}"
-
-        # Get the current time
-        now = time.time()
-
-        # Check if the key exists in the store
-        if cache_key not in self._rate_limit_store:
-            # If not, create a new entry
-            self._rate_limit_store[cache_key] = {
-                "attempts": 1,
-                "first_attempt": now,
-                "last_attempt": now
-            }
-            return False
-
-        # Get the entry
-        entry = self._rate_limit_store[cache_key]
-
-        # Check if the entry has expired
-        if now - entry["first_attempt"] > window_seconds:
-            # If so, reset it
-            entry["attempts"] = 1
-            entry["first_attempt"] = now
-            entry["last_attempt"] = now
-            return False
-
-        # Update the last attempt time
-        entry["last_attempt"] = now
-
-        # Increment the attempt counter
-        entry["attempts"] += 1
-
-        # Check if the maximum attempts have been exceeded
-        return entry["attempts"] > max_attempts
-
-    def _reset_rate_limit(self, key: str, action: str) -> None:
-        """
-        Reset the rate limit for a key and action.
-
-        Args:
-            key: The key to reset (IP address or username)
-            action: The action to reset (login, password_reset, etc.)
-        """
-        cache_key = f"{key}:{action}"
-        if cache_key in self._rate_limit_store:
-            del self._rate_limit_store[cache_key]
-
-    def _check_account_lockout(self, username: str) -> Tuple[bool, Optional[str]]:
-        """
-        Check if an account is locked.
-
-        Args:
-            username: The username to check
-
-        Returns:
-            Tuple containing:
-              - Boolean indicating if the account is locked
-              - Optional reason for lockout
-        """
-        if not self.account_lockout_config.get("enabled", True) or not self.db_adapter:
-            return False, None
-
-        # Get user data
-        user_data = self.db_adapter.get_user(username)
-
-        if not user_data:
-            return False, None
-
-        # Check if account is explicitly inactive
-        if not user_data.get("is_active", True):
-            return True, "Account is deactivated"
-
-        # Check if there's a lockout timestamp and it's in the future
-        locked_until = user_data.get("locked_until")
-        if locked_until and isinstance(locked_until, datetime) and locked_until > datetime.utcnow():
-            return True, f"Account is locked until {locked_until}"
-
-        # Check if too many failed attempts
-        login_attempts = user_data.get("login_attempts", 0)
-        max_attempts = self.account_lockout_config.get("max_attempts", 5)
-
-        if login_attempts >= max_attempts:
-            # Lock the account
-            lockout_duration = self.account_lockout_config.get("lockout_duration", 1800)  # 30 minutes
-            locked_until = datetime.utcnow() + timedelta(seconds=lockout_duration)
-
-            # Update the user record
-            self.db_adapter.update_user(
-                username,
-                {"locked_until": locked_until}
-            )
-
-            return True, f"Account is locked until {locked_until}"
-
-        return False, None
-
-    def _unlock_account(self, username: str) -> bool:
-        """
-        Unlock an account and invalidate cache.
-
-        Args:
-            username: The username to unlock
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.db_adapter:
-            self.logger.error("Database adapter not configured")
-            return False
-
-        try:
-            # Reset login attempts and clear lockout
-            result = self.db_adapter.update_user(
-                username,
-                {
-                    "login_attempts": 0,
-                    "locked_until": None
-                }
-            )
-
-            if result:
-                # Invalidate cache for this user
-                cache_key = f"user:{username}"
-                self.cache.delete(cache_key)
-                self.logger.debug(f"Invalidated cache for user '{username}' after unlocking account")
-
-            self.logger.info(f"Account unlocked for user: {username}")
-            return result
-
-        except Exception as e:
-            self.logger.error(f"Error unlocking account for user '{username}': {e}")
-            return False
-
-    def _is_password_expired(self, user_data: Dict[str, Any]) -> bool:
-        """
-        Check if a user's password has expired.
-
-        Args:
-            user_data: The user data from the database
-
-        Returns:
-            True if the password has expired, False otherwise
-        """
-        # Check if password expiration is enabled
-        max_age_days = self.password_policy.get("max_age_days")
-        if not max_age_days:
-            return False
-
-        # Check if there's a last password change timestamp
-        last_password_change = user_data.get("last_password_change")
-        if not last_password_change or not isinstance(last_password_change, datetime):
-            return False
-
-        # Check if the password is older than the maximum age
-        password_age = (datetime.utcnow() - last_password_change).days
-        return password_age > max_age_days
-
-    def _validate_password(self, password: str) -> Tuple[bool, Optional[str]]:
-        """
-        Validate a password against the password policy.
-
-        Args:
-            password: The password to validate
-
-        Returns:
-            Tuple containing:
-              - Boolean indicating if the password is valid
-              - Optional reason why the password is invalid
-        """
-        # Check length
-        min_length = self.password_policy.get("min_length", 8)
-        if len(password) < min_length:
-            return False, f"Password must be at least {min_length} characters long"
-
-        # Check for uppercase letters
-        if self.password_policy.get("require_upper", True) and not any(c.isupper() for c in password):
-            return False, "Password must contain at least one uppercase letter"
-
-        # Check for lowercase letters
-        if self.password_policy.get("require_lower", True) and not any(c.islower() for c in password):
-            return False, "Password must contain at least one lowercase letter"
-
-        # Check for digits
-        if self.password_policy.get("require_digit", True) and not any(c.isdigit() for c in password):
-            return False, "Password must contain at least one digit"
-
-        # Check for special characters
-        if self.password_policy.get("require_special", False) and not any(c in "!@#$%^&*()-_=+[]{}|;:,.<>?/" for c in password):
-            return False, "Password must contain at least one special character"
-
-        # Check for common passwords
-        if self.password_policy.get("prevent_common", True):
-            common_passwords = self.password_policy.get("common_passwords", [])
-            if password in common_passwords:
-                return False, "Password is too common"
-
-        return True, None
-
-    def get_cache_stats(self) -> Dict[str, Any]:
-        """
-        Get cache statistics.
-
-        Returns:
-            Dictionary with cache statistics
-        """
-        stats = self.cache.get_stats()
-        return {
-            "hits": stats.hits,
-            "misses": stats.misses,
-            "sets": stats.sets,
-            "deletes": stats.deletes,
-            "clears": stats.clears,
-            "hit_rate": stats.hit_rate,
-            "active_keys": len(self.cache.get_keys()) if hasattr(self.cache, 'get_keys') else 0,
-            "enabled": self.cache_config.get("enabled", True),
-            "type": self.cache_config.get("type", "memory")
-        }
-
-    def check_database_indexes(self) -> Dict[str, Any]:
-    """
-    Check the health of the database indexes.
-
-    This method ensures all required indexes exist and are correctly configured.
-    It's useful to run during application startup or as part of health checks.
-
-    Returns:
-        Dictionary with information about the database indexes status.
-    """
-    if not self.db_adapter:
-        self.logger.error("Database adapter not configured")
-        return {"error": "Database adapter not configured"}
-
-    # Only MongoDB adapter currently supports index verification
-    if hasattr(self.db_adapter, 'verify_indexes'):
-        try:
-            # Call the adapter's verify_indexes method
-            index_status = self.db_adapter.verify_indexes()
-
-            # Calculate the percentage of indexes that exist
-            total_indexes = len(index_status)
-            existing_indexes = sum(1 for exists in index_status.values() if exists)
-
-            if total_indexes > 0:
-                health_percentage = (existing_indexes / total_indexes) * 100
-            else:
-                health_percentage = 0
-
-            # Determine overall health status
-            if health_percentage == 100:
-                health_status = "healthy"
-            elif health_percentage >= 80:
-                health_status = "warning"
-            else:
-                health_status = "critical"
-
-            # Build the result
-            result = {
-                "status": health_status,
-                "health_percentage": health_percentage,
-                "total_indexes": total_indexes,
-                "existing_indexes": existing_indexes,
-                "missing_indexes": [name for name, exists in index_status.items() if not exists],
-                "index_details": index_status
-            }
-
-            # Log the result
-            self.logger.info(f"Database indexes health check: {health_status} ({health_percentage:.1f}%)")
-            if result["missing_indexes"]:
-                self.logger.warning(f"Missing indexes: {', '.join(result['missing_indexes'])}")
-
-            return result
-
-        except Exception as e:
-            self.logger.error(f"Error checking database indexes: {e}")
-            return {"error": str(e)}
-    else:
-        self.logger.warning("Database adapter does not support index verification")
-        return {"error": "Database adapter does not support index verification"}
