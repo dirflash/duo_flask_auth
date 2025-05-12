@@ -1,6 +1,6 @@
 # Duo Flask Auth
 
-A reusable Flask authentication library with Duo MFA support, enhanced security features, and flexibility improvements. This library provides a clean, simple way to add secure authentication and Multi-Factor Authentication (MFA) to your Flask applications.
+A reusable Flask authentication library with Duo MFA support, enhanced security features, flexibility improvements, and performance optimizations. This library provides a clean, simple way to add secure authentication and Multi-Factor Authentication (MFA) to your Flask applications.
 
 ## Features
 
@@ -15,6 +15,10 @@ A reusable Flask authentication library with Duo MFA support, enhanced security 
   - CSRF protection
   - Enhanced password policies
   - Security event logging
+- Performance optimizations:
+  - Connection pooling
+  - User data caching
+  - Optimized database indexing
 - Customizable templates
 - Blueprint-based architecture for easy integration
 
@@ -321,6 +325,148 @@ auth = DuoFlaskAuth(app, routes_prefix='/api/v1/auth')
 auth = DuoFlaskAuth(app, routes_prefix='')
 ```
 
+## Performance Configuration
+
+The library includes several performance enhancements that can be configured to optimize your application's performance.
+
+### Connection Pooling
+
+Connection pooling reduces the overhead of establishing new database connections for each request by reusing existing connections.
+
+```python
+# Configure connection pooling for MongoDB
+db_config = {
+    'username': 'mongodb_username',
+    'password': 'mongodb_password',
+    'host': 'mongodb_host',
+    'database': 'your_database',
+    'pool_size': 50,            # Maximum number of connections in the pool
+    'min_pool_size': 10,        # Minimum number of connections to maintain
+    'max_idle_time_ms': 60000,  # How long connections can remain idle (1 minute)
+    'wait_queue_timeout_ms': 2000  # How long to wait for an available connection
+}
+
+auth = DuoFlaskAuth(app, db_config=db_config)
+```
+
+### Caching
+
+The library implements in-memory caching to reduce database load for frequently accessed user data.
+
+```python
+# Configure caching
+cache_config = {
+    'enabled': True,           # Enable or disable caching
+    'type': 'memory',          # Currently only memory cache is supported
+    'default_ttl': 300,        # Default TTL for cached items (5 minutes)
+    'user_ttl': 60,            # TTL for user data (1 minute)
+    'security_events_ttl': 300 # TTL for security events (5 minutes)
+}
+
+auth = DuoFlaskAuth(app, db_config=db_config, cache_config=cache_config)
+```
+
+### Database Indexing
+
+The library automatically creates optimized indexes for MongoDB collections to improve query performance. You can check index health using:
+
+```python
+# Check database index health
+index_health = auth.check_database_indexes()
+print(f"Database index health: {index_health['status']} ({index_health['health_percentage']}%)")
+```
+
+### Complete Performance Configuration
+
+Here's an example of configuring all performance features:
+
+```python
+from flask import Flask
+from duo_flask_auth import DuoFlaskAuth
+
+app = Flask(__name__)
+app.secret_key = 'your-secure-secret-key'
+
+# Database and Duo configurations (as shown earlier)
+# ...
+
+# Performance configuration
+performance_config = {
+    # Database connection pooling
+    'db_config': {
+        'username': 'mongodb_username',
+        'password': 'mongodb_password',
+        'host': 'mongodb_host',
+        'database': 'your_database',
+        'pool_size': 50,
+        'min_pool_size': 10,
+        'max_idle_time_ms': 60000,
+        'wait_queue_timeout_ms': 2000
+    },
+
+    # Caching configuration
+    'cache_config': {
+        'enabled': True,
+        'type': 'memory',
+        'default_ttl': 300,
+        'user_ttl': 60,
+        'security_events_ttl': 300
+    }
+}
+
+# Initialize the authentication library with performance enhancements
+auth = DuoFlaskAuth(
+    app,
+    db_config=performance_config['db_config'],
+    duo_config=duo_config,
+    cache_config=performance_config['cache_config']
+)
+
+# Check database indexes health on startup
+@app.before_first_request
+def check_db_health():
+    index_health = auth.check_database_indexes()
+    app.logger.info(f"Database index health: {index_health['status']} ({index_health['health_percentage']}%)")
+    if index_health.get('missing_indexes'):
+        app.logger.warning(f"Missing indexes: {', '.join(index_health['missing_indexes'])}")
+```
+
+## Performance Monitoring
+
+The library includes tools to monitor performance metrics, which can help identify potential bottlenecks in your application.
+
+### Cache Statistics
+
+You can monitor cache performance using the `get_cache_stats()` method:
+
+```python
+# Get cache statistics
+cache_stats = auth.get_cache_stats()
+print(f"Cache hit rate: {cache_stats['hit_rate']*100:.1f}%")
+print(f"Total hits: {cache_stats['hits']}, Misses: {cache_stats['misses']}")
+print(f"Active cache keys: {cache_stats['active_keys']}")
+```
+
+### Database Index Health
+
+The `check_database_indexes()` method returns information about the health of database indexes:
+
+```python
+# Check database index health
+index_health = auth.check_database_indexes()
+print(f"Database index status: {index_health['status']}")
+print(f"Index health: {index_health['health_percentage']:.1f}%")
+print(f"Existing indexes: {index_health['existing_indexes']} of {index_health['total_indexes']}")
+
+# List any missing indexes
+if index_health['missing_indexes']:
+    print("Missing indexes:")
+    for idx in index_health['missing_indexes']:
+        print(f"  - {idx}")
+```
+
+For a more detailed view of index health, you can expose this information in your admin dashboard.
+
 ## Using Deferred Initialization
 
 If you're using an application factory pattern, you can initialize the extension later:
@@ -354,6 +500,12 @@ def create_app():
 - `password`: MongoDB password
 - `host`: MongoDB host address
 - `database`: MongoDB database name
+- `pool_size`: Maximum connection pool size (default: 50)
+- `min_pool_size`: Minimum connections to maintain (default: 10)
+- `max_idle_time_ms`: Maximum time a connection can remain idle (default: 60000)
+- `wait_queue_timeout_ms`: How long to wait for an available connection (default: 2000)
+- `connect_timeout_ms`: Timeout for initial connection (default: 30000)
+- `socket_timeout_ms`: Timeout for operations (default: 45000)
 
 #### SQLAlchemy
 
@@ -367,6 +519,14 @@ def create_app():
 - `client_secret`: Duo application client secret
 - `api_host`: Duo API hostname
 - `redirect_uri`: Your application's redirect URI for Duo callbacks
+
+### Caching Configuration
+
+- `enabled`: Enable or disable caching (default: True)
+- `type`: Cache implementation to use (default: 'memory')
+- `default_ttl`: Default time-to-live in seconds (default: 300)
+- `user_ttl`: TTL for user data in seconds (default: 60)
+- `security_events_ttl`: TTL for security events in seconds (default: 300)
 
 ## Customizing Templates
 
@@ -398,6 +558,7 @@ The main class that provides authentication functionality.
 - `rate_limit_config`: Rate limiting configuration (optional)
 - `account_lockout_config`: Account lockout configuration (optional)
 - `password_policy`: Password policy configuration (optional)
+- `cache_config`: Caching configuration (optional)
 
 #### Methods
 
@@ -415,6 +576,8 @@ The main class that provides authentication functionality.
 - `reset_password_with_token(username, token, new_password)`: Reset a password using a token
 - `unlock_account(username)`: Unlock a locked user account
 - `log_security_event(event_type, username, ip_address=None, details=None)`: Log a security event
+- `get_cache_stats()`: Get statistics about cache performance
+- `check_database_indexes()`: Check the health of database indexes
 
 ### BaseUser
 
@@ -464,6 +627,20 @@ Abstract base class for database adapters.
 - `get_user_by_reset_token(token)`: Get a user by reset token
 - `log_security_event(event_data)`: Log a security event
 - `get_security_events(filters=None, limit=100)`: Get security events
+- `verify_indexes()`: Verify that all required indexes exist
+
+### Cache
+
+Abstract base class for cache implementations.
+
+#### Key Methods
+
+- `get(key)`: Get a value from the cache
+- `set(key, value, ttl=300)`: Set a value in the cache
+- `delete(key)`: Delete a value from the cache
+- `clear()`: Clear all cached values
+- `get_or_set(key, callback, ttl=300)`: Get a value from the cache, or set it if not found
+- `get_stats()`: Get cache statistics
 
 ## MongoDB Schema
 

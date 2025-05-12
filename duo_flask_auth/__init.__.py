@@ -7,6 +7,7 @@ for Flask applications.
 
 from .auth import DuoFlaskAuth
 from .user_model import BaseUser, register_user_model
+from .cache import Cache, MemoryCache, NoCache
 from .db_adapters import DatabaseAdapter, MongoDBAdapter, SQLAlchemyAdapter, get_db_adapter
 from .exceptions import (
     AuthError,

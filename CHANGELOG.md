@@ -5,6 +5,51 @@ All notable changes to the Duo Flask Auth library will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-05-20
+
+### Added
+
+- Performance enhancements:
+  - Connection pooling:
+    - Configurable MongoDB connection pool settings
+    - Optimized connection management for high traffic applications
+    - Automatic connection reuse to reduce database overhead
+  - Caching system:
+    - In-memory caching for frequently accessed user data
+    - Configurable Time-To-Live (TTL) for different data types
+    - Automatic cache invalidation on user data updates
+    - Cache statistics for monitoring hit/miss rates
+  - Database indexing:
+    - Optimized MongoDB indexes for common authentication queries
+    - TTL indexes for automatic token expiration
+    - Compound indexes for complex query patterns
+    - Background index creation to prevent blocking operations
+    - Index health monitoring and verification
+- New classes and modules:
+  - `cache.py` with MemoryCache implementation
+  - Enhanced database adapter with connection pooling support
+  - Database index health checking functionality
+- Additional documentation:
+  - Performance tuning guide
+  - Cache configuration examples
+  - Database indexing best practices
+
+### Changed
+
+- Updated MongoDB connection handling with optimized settings
+- Enhanced user loading with caching to reduce database load
+- Improved MongoDB query methods with index awareness
+- Added cache invalidation to all user update operations
+- Added index verification on application startup
+
+### Improved
+
+- Authentication performance under high load
+- Database query efficiency with optimized indexes
+- Memory usage with configurable connection pooling
+- Response times with in-memory caching
+- Long-term stability with better connection management
+
 ## [0.3.0] - 2025-05-15
 
 ### Added

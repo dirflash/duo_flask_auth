@@ -502,7 +502,7 @@ def login(self):
     @login_required
     def enable_mfa(self):
         """
-        Enable MFA for the current user.
+        Enable MFA for the current user and invalidate cache.
 
         Returns:
             Flask response.
@@ -529,6 +529,11 @@ def login(self):
             )
 
             if result:
+                # Invalidate cache for this user
+                cache_key = f"user:{current_user.username}"
+                self.cache.delete(cache_key)
+                self.logger.debug(f"Invalidated cache for user '{current_user.username}' after enabling MFA")
+
                 # Log security event
                 self.log_security_event(
                     event_type="mfa_enabled",
@@ -546,12 +551,12 @@ def login(self):
         except Exception as e:
             current_app.logger.error(f"Error enabling MFA: {e}")
             flash("An error occurred while enabling MFA. Please try again.", "error")
-            return redirect(url_for("duo_flask_auth.login_success"))
+            return redirect(url_for("duo_flask_auth.login_success")
 
     @login_required
     def disable_mfa(self):
         """
-        Disable MFA for the current user.
+        Disable MFA for the current user and invalidate cache.
 
         Returns:
             Flask response.
@@ -573,6 +578,11 @@ def login(self):
             )
 
             if result:
+                # Invalidate cache for this user
+                cache_key = f"user:{current_user.username}"
+                self.cache.delete(cache_key)
+                self.logger.debug(f"Invalidated cache for user '{current_user.username}' after disabling MFA")
+
                 # Log security event
                 self.log_security_event(
                     event_type="mfa_disabled",
@@ -594,7 +604,7 @@ def login(self):
 
     def verify_email(self, username: str) -> bool:
         """
-        Mark a user's email as verified.
+        Mark a user's email as verified and invalidate cache.
 
         Args:
             username: The username (email) to verify
@@ -613,6 +623,11 @@ def login(self):
             )
 
             if result:
+                # Invalidate cache for this user
+                cache_key = f"user:{username}"
+                self.cache.delete(cache_key)
+                self.logger.debug(f"Invalidated cache for user '{username}' after email verification")
+
                 # Log security event
                 self.log_security_event(
                     event_type="email_verified",
@@ -629,7 +644,7 @@ def login(self):
 
     def update_user_role(self, username: str, role: str) -> bool:
         """
-        Update a user's role.
+        Update a user's role and invalidate cache.
 
         Args:
             username: The username to update
@@ -655,6 +670,11 @@ def login(self):
             )
 
             if result:
+                # Invalidate cache for this user
+                cache_key = f"user:{username}"
+                self.cache.delete(cache_key)
+                self.logger.debug(f"Invalidated cache for user '{username}' after role update")
+
                 # Log security event
                 self.log_security_event(
                     event_type="role_updated",
@@ -674,7 +694,7 @@ def login(self):
 
     def set_user_active_status(self, username: str, is_active: bool) -> bool:
         """
-        Set a user's active status.
+        Set a user's active status and invalidate cache.
 
         Args:
             username: The username to update
@@ -703,6 +723,11 @@ def login(self):
             )
 
             if result:
+                # Invalidate cache for this user
+                cache_key = f"user:{username}"
+                self.cache.delete(cache_key)
+                self.logger.debug(f"Invalidated cache for user '{username}' after status update")
+
                 # Log security event
                 status_str = "activated" if is_active else "deactivated"
                 self.log_security_event(
@@ -720,6 +745,7 @@ def login(self):
         except Exception as e:
             self.logger.error(f"Error updating active status for user '{username}': {e}")
             return False
+
 
     def forgot_password(self):
         """
@@ -859,7 +885,7 @@ def login(self):
 
     def reset_password_with_token(self, username: str, token: str, new_password: str) -> bool:
         """
-        Reset a user's password using a reset token.
+        Reset a user's password using a reset token and invalidate cache.
 
         Args:
             username: The username to reset password for
@@ -907,9 +933,21 @@ def login(self):
                 }
             )
 
-            if result and ip_address:
-                # Reset rate limiting
-                self._reset_rate_limit(ip_address, "password_reset")
+            if result:
+                # Invalidate cache for this user
+                cache_key = f"user:{username}"
+                self.cache.delete(cache_key)
+                self.logger.debug(f"Invalidated cache for user '{username}' after password reset")
+
+                # Reset rate limiting if IP address is available
+                if ip_address:
+                    self._reset_rate_limit(ip_address, "password_reset")
+
+                # Log the event
+                self.log_security_event(
+                    event_type="password_reset_successful",
+                    username=username
+                )
 
             return result
 
@@ -1317,7 +1355,8 @@ class DuoFlaskAuth:
         user_model: str = 'default',
         rate_limit_config: Optional[Dict[str, Any]] = None,
         account_lockout_config: Optional[Dict[str, Any]] = None,
-        password_policy: Optional[Dict[str, Any]] = None
+        password_policy: Optional[Dict[str, Any]] = None,
+        cache_config: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize the DuoFlaskAuth extension.
@@ -1342,6 +1381,33 @@ class DuoFlaskAuth:
         self.user_model = user_model
         self.duo_client = None
         self.csrf = CSRFProtect()
+
+        # Configure caching
+        self.cache_config = cache_config or {
+            "enabled": True,
+            "type": "memory",
+            "default_ttl": 300,    # 5 minutes default TTL
+            "user_ttl": 60,        # 1 minute for user data
+            "security_events_ttl": 300,  # 5 minutes for security events
+            "cleanup_interval": 60  # Clean up expired entries every minute
+        }
+
+        # Create cache instance based on configuration
+        if self.cache_config.get("enabled", True):
+            if self.cache_config.get("type", "memory") == "memory":
+                self.cache = MemoryCache(
+                    default_ttl=self.cache_config.get("default_ttl", 300),
+                    cleanup_interval=self.cache_config.get("cleanup_interval", 60)
+                )
+                self.logger.info("Initialized memory cache")
+            else:
+                # Default to memory cache if type is not recognized
+                self.cache = MemoryCache(default_ttl=self.cache_config.get("default_ttl", 300))
+                self.logger.info(f"Unrecognized cache type '{self.cache_config.get('type')}', falling back to memory cache")
+        else:
+            # Use dummy cache if caching is disabled
+            self.cache = NoCache()
+            self.logger.info("Caching is disabled")
 
         # Initialize database adapter
         if isinstance(db_adapter, DatabaseAdapter):
@@ -1450,6 +1516,24 @@ class DuoFlaskAuth:
         if self.db_adapter:
             self.db_adapter.initialize(app)
 
+            # Verify database indexes after initialization
+            # This ensures all necessary indexes exist
+            if hasattr(self.db_adapter, 'verify_indexes'):
+                @app.before_first_request
+                def verify_database_indexes():
+                    try:
+                        app.logger.info("Verifying database indexes...")
+                        index_status = self.db_adapter.verify_indexes()
+
+                        # Log any missing indexes
+                        missing_indexes = [name for name, exists in index_status.items() if not exists]
+                        if missing_indexes:
+                            app.logger.warning(f"Missing database indexes: {', '.join(missing_indexes)}")
+                        else:
+                            app.logger.info("All database indexes are correctly configured")
+                    except Exception as e:
+                        app.logger.error(f"Error verifying database indexes: {e}")
+
         # Set up the Duo client if provided
         if self.duo_config:
             self._setup_duo_client(app)
@@ -1512,13 +1596,13 @@ class DuoFlaskAuth:
 
     def load_user(self, user_id: str) -> Optional[BaseUser]:
         """
-        Load a user from the database by their user ID.
+        Load a user from the database or cache by their user ID.
 
         Args:
             user_id: The ID of the user to load (typically the username).
 
         Returns:
-            A User object if the user is found in the database, otherwise None.
+            A User object if the user is found, otherwise None.
         """
         current_app.logger.debug(f"Loading user: {user_id}")
 
@@ -1526,15 +1610,41 @@ class DuoFlaskAuth:
             current_app.logger.error("Database adapter not configured")
             return None
 
-        # Get user data from the database
+        # Try to get user from cache first
+        cache_key = f"user:{user_id}"
+        cached_user = self.cache.get(cache_key)
+
+        if cached_user:
+            current_app.logger.debug(f"User '{user_id}' loaded from cache")
+
+            # Check if password has expired (we always do this check even with cached data)
+            if self._is_password_expired(cached_user):
+                cached_user['password_expired'] = True
+
+            # Create a User object with the cached data
+            try:
+                user = self.user_factory(cached_user)
+                return user
+            except Exception as e:
+                current_app.logger.error(f"Error creating user object from cache: {e}")
+                # Fall through to database lookup
+
+        # User not in cache, get from database
+        current_app.logger.debug(f"User '{user_id}' not found in cache, querying database")
         user_data = self.db_adapter.get_user(user_id)
 
         if not user_data:
+            current_app.logger.debug(f"User '{user_id}' not found in database")
             return None
 
         # Check if password has expired
         if self._is_password_expired(user_data):
             user_data['password_expired'] = True
+
+        # Cache the user data
+        user_ttl = self.cache_config.get("user_ttl", 60)
+        self.cache.set(cache_key, user_data, ttl=user_ttl)
+        current_app.logger.debug(f"User '{user_id}' cached with TTL of {user_ttl}s")
 
         # Create a User object with the data from the database
         try:
@@ -1675,7 +1785,7 @@ class DuoFlaskAuth:
 
     def _unlock_account(self, username: str) -> bool:
         """
-        Unlock an account.
+        Unlock an account and invalidate cache.
 
         Args:
             username: The username to unlock
@@ -1696,6 +1806,12 @@ class DuoFlaskAuth:
                     "locked_until": None
                 }
             )
+
+            if result:
+                # Invalidate cache for this user
+                cache_key = f"user:{username}"
+                self.cache.delete(cache_key)
+                self.logger.debug(f"Invalidated cache for user '{username}' after unlocking account")
 
             self.logger.info(f"Account unlocked for user: {username}")
             return result
@@ -1768,3 +1884,84 @@ class DuoFlaskAuth:
                 return False, "Password is too common"
 
         return True, None
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics.
+
+        Returns:
+            Dictionary with cache statistics
+        """
+        stats = self.cache.get_stats()
+        return {
+            "hits": stats.hits,
+            "misses": stats.misses,
+            "sets": stats.sets,
+            "deletes": stats.deletes,
+            "clears": stats.clears,
+            "hit_rate": stats.hit_rate,
+            "active_keys": len(self.cache.get_keys()) if hasattr(self.cache, 'get_keys') else 0,
+            "enabled": self.cache_config.get("enabled", True),
+            "type": self.cache_config.get("type", "memory")
+        }
+
+    def check_database_indexes(self) -> Dict[str, Any]:
+    """
+    Check the health of the database indexes.
+
+    This method ensures all required indexes exist and are correctly configured.
+    It's useful to run during application startup or as part of health checks.
+
+    Returns:
+        Dictionary with information about the database indexes status.
+    """
+    if not self.db_adapter:
+        self.logger.error("Database adapter not configured")
+        return {"error": "Database adapter not configured"}
+
+    # Only MongoDB adapter currently supports index verification
+    if hasattr(self.db_adapter, 'verify_indexes'):
+        try:
+            # Call the adapter's verify_indexes method
+            index_status = self.db_adapter.verify_indexes()
+
+            # Calculate the percentage of indexes that exist
+            total_indexes = len(index_status)
+            existing_indexes = sum(1 for exists in index_status.values() if exists)
+
+            if total_indexes > 0:
+                health_percentage = (existing_indexes / total_indexes) * 100
+            else:
+                health_percentage = 0
+
+            # Determine overall health status
+            if health_percentage == 100:
+                health_status = "healthy"
+            elif health_percentage >= 80:
+                health_status = "warning"
+            else:
+                health_status = "critical"
+
+            # Build the result
+            result = {
+                "status": health_status,
+                "health_percentage": health_percentage,
+                "total_indexes": total_indexes,
+                "existing_indexes": existing_indexes,
+                "missing_indexes": [name for name, exists in index_status.items() if not exists],
+                "index_details": index_status
+            }
+
+            # Log the result
+            self.logger.info(f"Database indexes health check: {health_status} ({health_percentage:.1f}%)")
+            if result["missing_indexes"]:
+                self.logger.warning(f"Missing indexes: {', '.join(result['missing_indexes'])}")
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error checking database indexes: {e}")
+            return {"error": str(e)}
+    else:
+        self.logger.warning("Database adapter does not support index verification")
+        return {"error": "Database adapter does not support index verification"}

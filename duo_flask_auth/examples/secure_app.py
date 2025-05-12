@@ -143,6 +143,24 @@ def admin_panel():
 
     return render_template('admin.html', users=users, security_events=security_events)
 
+@app.route('/admin/database-health')
+@login_required
+def database_health():
+    """Database health status for administrators."""
+    # Check if the user has admin role
+    if not current_user.role == 'admin':
+        flash("You don't have permission to access this page.", "error")
+        return redirect(url_for('dashboard'))
+
+    # Get database index health information
+    index_health = auth.check_database_indexes()
+
+    # Display the health information
+    return render_template(
+        'admin/database_health.html',
+        index_health=index_health
+    )
+
 @app.route('/create-user-form')
 @login_required
 def create_user_form():

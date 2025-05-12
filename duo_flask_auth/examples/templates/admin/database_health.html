@@ -1,0 +1,71 @@
+<!-- templates/admin/database_health.html -->
+{% extends "base.html" %} {% block title %}Database Health - Duo Flask Auth
+Admin{% endblock %} {% block content %}
+<h1>Database Health Status</h1>
+
+<div class="card mb-4">
+  <div class="card-header">
+    <h2>MongoDB Index Health</h2>
+  </div>
+  <div class="card-body">
+    <div class="health-status {{ index_health.status }}">
+      <h3>Status: {{ index_health.status|title }}</h3>
+      <div class="progress">
+        <div
+          class="progress-bar {% if index_health.health_percentage == 100 %}bg-success{% elif index_health.health_percentage >= 80 %}bg-warning{% else %}bg-danger{% endif %}"
+          role="progressbar"
+          style="width: {{ index_health.health_percentage }}%;"
+          aria-valuenow="{{ index_health.health_percentage }}"
+          aria-valuemin="0"
+          aria-valuemax="100"
+        >
+          {{ index_health.health_percentage|round(1) }}%
+        </div>
+      </div>
+      <p>
+        {{ index_health.existing_indexes }} of {{ index_health.total_indexes }}
+        indexes are correctly configured.
+      </p>
+    </div>
+
+    {% if index_health.missing_indexes %}
+    <div class="alert alert-warning mt-3">
+      <h4>Missing Indexes</h4>
+      <ul>
+        {% for index in index_health.missing_indexes %}
+        <li>{{ index }}</li>
+        {% endfor %}
+      </ul>
+      <p>
+        Missing indexes can cause decreased performance. Please contact your
+        administrator.
+      </p>
+    </div>
+    {% endif %}
+
+    <h4 class="mt-4">Index Details</h4>
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Index Name</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for index_name, exists in index_health.index_details.items() %}
+        <tr>
+          <td>{{ index_name }}</td>
+          <td>
+            {% if exists %}
+            <span class="badge bg-success">✓ Configured</span>
+            {% else %}
+            <span class="badge bg-danger">✗ Missing</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
