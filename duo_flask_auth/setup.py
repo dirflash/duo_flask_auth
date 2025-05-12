@@ -1,26 +1,36 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
+
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
 
 setup(
     name="duo_flask_auth",
-    version="0.2.0",
+    version="0.4.0",
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
         "Flask>=2.0.0",
         "Flask-Login>=0.5.0",
-        "Flask-WTF>=1.0.0",   # Added for CSRF protection
+        "Flask-WTF>=1.0.0",  # Added for CSRF protection
         "duo-universal>=1.0.0",
         "pymongo>=4.0.0",
         "certifi>=2021.10.8",
         "Werkzeug>=2.0.0",
     ],
-    author="Your Name",
-    author_email="your.email@example.com",
-    description="Flask authentication library with Duo MFA support and enhanced security features",
-    keywords="flask, authentication, duo, mfa, security",
+    author="Aaron Davis",
+    author_email="aaron.e.davis@gmail.com",
+    description="Flask authentication library with Duo MFA support, enhanced security features, flexibility, and performance optimizations",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    keywords="flask, authentication, duo, mfa, security, performance",
     url="https://github.com/yourusername/duo-flask-auth",
+    project_urls={
+        "Bug Tracker": "https://github.com/yourusername/duo-flask-auth/issues",
+        "Documentation": "https://github.com/yourusername/duo-flask-auth#readme",
+        "Source Code": "https://github.com/yourusername/duo-flask-auth",
+    },
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Framework :: Flask",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
@@ -29,7 +39,7 @@ setup(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
-        "Topic :: Security",  # Added security topic
+        "Topic :: Security",
     ],
     python_requires=">=3.7",
     package_data={

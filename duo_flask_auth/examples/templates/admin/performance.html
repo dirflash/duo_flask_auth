@@ -1,0 +1,294 @@
+<!-- templates/admin/performance.html -->
+{% extends "base.html" %} {% block title %}Performance Dashboard - Flask App
+with Duo MFA{% endblock %} {% block styles %}
+<style>
+  .card {
+    margin-bottom: 20px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  }
+
+  .card-header {
+    padding: 10px 15px;
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #ddd;
+    font-weight: bold;
+  }
+
+  .card-body {
+    padding: 15px;
+  }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+  }
+
+  .metric-card {
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 15px;
+    text-align: center;
+  }
+
+  .metric-value {
+    font-size: 24px;
+    font-weight: bold;
+    margin: 10px 0;
+  }
+
+  .metric-label {
+    color: #6c757d;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 1px;
+  }
+
+  .good {
+    color: #28a745;
+  }
+
+  .warning {
+    color: #ffc107;
+  }
+
+  .danger {
+    color: #dc3545;
+  }
+
+  .progress {
+    height: 20px;
+    margin: 10px 0;
+    background-color: #e9ecef;
+    border-radius: 5px;
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    height: 100%;
+    text-align: center;
+    color: white;
+    transition: width 0.6s ease;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .progress-bar.good {
+    background-color: #28a745;
+  }
+
+  .progress-bar.warning {
+    background-color: #ffc107;
+    color: #212529;
+  }
+
+  .progress-bar.danger {
+    background-color: #dc3545;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  table th,
+  table td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+  }
+
+  table th {
+    background-color: #f8f9fa;
+  }
+
+  tr:nth-child(even) {
+    background-color: #f9f9f9;
+  }
+
+  .refresh-button {
+    float: right;
+    margin-bottom: 15px;
+  }
+</style>
+{% endblock %} {% block content %}
+<h1>Performance Dashboard</h1>
+
+<p>This dashboard provides a real-time view of system performance metrics.</p>
+
+<a
+  href="{{ url_for('performance_dashboard') }}"
+  class="btn btn-primary refresh-button"
+  >Refresh Metrics</a
+>
+
+<div class="card">
+  <div class="card-header">System Overview</div>
+  <div class="card-body">
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Average Request Time</div>
+        <div
+          class="metric-value {% if avg_request_time < 0.1 %}good{% elif avg_request_time < 0.5 %}warning{% else %}danger{% endif %}"
+        >
+          {{ "%.4f"|format(avg_request_time) }}s
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Average Login Time</div>
+        <div
+          class="metric-value {% if avg_login_time < 0.5 %}good{% elif avg_login_time < 1.5 %}warning{% else %}danger{% endif %}"
+        >
+          {{ "%.4f"|format(avg_login_time) }}s
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Database Accesses</div>
+        <div class="metric-value">{{ database_accesses }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Cache Hit Rate</div>
+        <div
+          class="metric-value {% if cache_stats.hit_rate > 0.8 %}good{% elif cache_stats.hit_rate > 0.5 %}warning{% else %}danger{% endif %}"
+        >
+          {{ "%.1f"|format(cache_stats.hit_rate * 100) }}%
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Cache Performance</div>
+  <div class="card-body">
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Cache Hits</div>
+        <div class="metric-value">{{ cache_stats.hits }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Cache Misses</div>
+        <div class="metric-value">{{ cache_stats.misses }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Cache Sets</div>
+        <div class="metric-value">{{ cache_stats.sets }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Cache Deletes</div>
+        <div class="metric-value">{{ cache_stats.deletes }}</div>
+      </div>
+    </div>
+
+    <div class="cache-actions">
+      <h4>Cache Actions</h4>
+      <a href="{{ url_for('cache_dashboard') }}" class="btn btn-primary"
+        >View Cache Details</a
+      >
+      <form
+        method="POST"
+        action="{{ url_for('clear_cache') }}"
+        style="display: inline-block; margin-left: 10px"
+      >
+        <button
+          type="submit"
+          class="btn btn-warning"
+          onclick="return confirm('Are you sure you want to clear the cache?')"
+        >
+          Clear Cache
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Database Index Health</div>
+  <div class="card-body">
+    <h4>
+      Overall Health:
+      <span
+        class="{% if index_health.status == 'healthy' %}good{% elif index_health.status == 'warning' %}warning{% else %}danger{% endif %}"
+        >{{ index_health.status|title }}</span
+      >
+    </h4>
+
+    <div class="progress">
+      <div
+        class="progress-bar {% if index_health.health_percentage == 100 %}good{% elif index_health.health_percentage >= 80 %}warning{% else %}danger{% endif %}"
+        style="width: {{ index_health.health_percentage|default(0)|float }}%;"
+      >
+        {{ index_health.health_percentage }}%
+      </div>
+    </div>
+
+    <p>
+      {{ index_health.existing_indexes }} of {{ index_health.total_indexes }}
+      indexes are correctly configured.
+    </p>
+
+    {% if index_health.missing_indexes %}
+    <div class="alert alert-warning">
+      <h5>Missing Indexes</h5>
+      <ul>
+        {% for index in index_health.missing_indexes %}
+        <li>{{ index }}</li>
+        {% endfor %}
+      </ul>
+      <p>Missing indexes can significantly impact query performance.</p>
+    </div>
+    {% endif %}
+
+    <h4>Index Details</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Index Name</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for index_name, exists in index_health.index_details.items() %}
+        <tr>
+          <td>{{ index_name }}</td>
+          <td>
+            {% if exists %}
+            <span class="badge good">✓ Configured</span>
+            {% else %}
+            <span class="badge danger">✗ Missing</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Connection Pool Status</div>
+  <div class="card-body">
+    <p>
+      Connection pool statistics are not available in the current MongoDB driver
+      version.
+    </p>
+    <p>
+      For production monitoring, consider using MongoDB Atlas monitoring or
+      setting up a MongoDB monitoring tool.
+    </p>
+  </div>
+</div>
+
+<script>
+  // Auto-refresh the page every 30 seconds
+  setTimeout(function () {
+    window.location.reload();
+  }, 30000);
+</script>
+{% endblock %}
