@@ -102,7 +102,7 @@ except ImportError:
         class AuthError(Exception):
             """Base exception for authentication errors."""
 
-            def __init__(self, message: str, code: str = None):
+            def __init__(self, message: str, code: Optional[str] = None):
                 self.message = message
                 self.code = code
                 super().__init__(self.message)
@@ -522,7 +522,6 @@ class DuoFlaskAuth:
             # This ensures all necessary indexes exist
             if hasattr(self.db_adapter, "verify_indexes"):
 
-                @app.before_first_request
                 def verify_database_indexes():
                     try:
                         app.logger.info("Verifying database indexes...")
@@ -540,6 +539,32 @@ class DuoFlaskAuth:
                             app.logger.info("All database indexes are correctly configured")
                     except Exception as e:
                         app.logger.error(f"Error verifying database indexes: {e}")
+
+                # Handle different Flask versions gracefully
+                # First, try the modern Flask 2.2.0+ approach
+                if hasattr(app, "before_serving"):
+                    try:
+                        app.before_serving(verify_database_indexes)
+                        app.logger.debug("Registered index verification with before_serving")
+                    except Exception as e:
+                        app.logger.warning(f"Failed to use before_serving: {e}. Using fallback.")
+                        verify_database_indexes()  # Execute directly as fallback
+                # For Flask < 2.2.0, try before_first_request if available
+                elif hasattr(app, "before_first_request"):
+                    try:
+                        app.before_first_request(verify_database_indexes)
+                        app.logger.debug("Registered index verification with before_first_request")
+                    except Exception as e:
+                        app.logger.warning(
+                            f"Failed to use before_first_request: {e}. Using fallback."
+                        )
+                        verify_database_indexes()  # Execute directly as fallback
+                # Last resort: just run it immediately
+                else:
+                    app.logger.debug(
+                        "No suitable hooks found, running index verification immediately"
+                    )
+                    verify_database_indexes()
 
         # Set up the Duo client if provided
         if self.duo_config:
@@ -724,10 +749,12 @@ class DuoFlaskAuth:
         Args:
             app: The Flask application.
         """
+        # Initialize duo_client to None first
+        self.duo_client = None
+
         # Validate Duo configuration
         if not self._validate_duo_config():
             app.logger.warning("Duo MFA not fully configured or invalid configuration.")
-            self.duo_client = None
             return
 
         # Extract Duo configuration
@@ -747,8 +774,12 @@ class DuoFlaskAuth:
 
             # Test connection to Duo
             try:
-                self.duo_client.health_check()
-                app.logger.info("Duo MFA client initialized and connection verified")
+                # Check if duo_client is not None before calling health_check
+                if self.duo_client is not None:
+                    self.duo_client.health_check()
+                    app.logger.info("Duo MFA client initialized and connection verified")
+                else:
+                    app.logger.warning("Duo MFA client initialization failed")
             except DuoException as e:
                 app.logger.warning(f"Duo MFA client initialized but health check failed: {e}")
                 # We'll keep the client initialized but log the warning
@@ -817,8 +848,9 @@ class DuoFlaskAuth:
             }
 
             # Duo MFA status
-            if self.duo_client:
+            if self.duo_client is not None:
                 try:
+                    # Only call health_check if duo_client is not None
                     self.duo_client.health_check()
                     health_status["components"]["duo_mfa"] = {
                         "status": "healthy",
@@ -844,30 +876,40 @@ class DuoFlaskAuth:
 
     def _setup_routes(self) -> None:
         """Set up authentication routes on the blueprint."""
-        # Define route methods as forward declarations to avoid "member not found" errors
-        # These will be defined fully later in the class
+
+        # Define a helper function for placeholder routes
+        def not_implemented_route(*args, **kwargs):
+            """
+            Placeholder for route handlers that are not yet implemented.
+            Returns a 501 Not Implemented response.
+            """
+            from flask import jsonify
+
+            return jsonify({"error": "Method not implemented"}), 501
+
+        # Use the helper function for all routes that don't have implementations yet
         if not hasattr(self, "login"):
-            self.login = lambda: None
+            self.login = not_implemented_route
         if not hasattr(self, "duo_callback"):
-            self.duo_callback = lambda: None
+            self.duo_callback = not_implemented_route
         if not hasattr(self, "logout"):
-            self.logout = lambda: None
+            self.logout = not_implemented_route
         if not hasattr(self, "enable_mfa"):
-            self.enable_mfa = lambda: None
+            self.enable_mfa = not_implemented_route
         if not hasattr(self, "disable_mfa"):
-            self.disable_mfa = lambda: None
+            self.disable_mfa = not_implemented_route
         if not hasattr(self, "add_user"):
-            self.add_user = lambda username, password: None
+            self.add_user = not_implemented_route
         if not hasattr(self, "unlock_account"):
-            self.unlock_account = lambda username: None
+            self.unlock_account = not_implemented_route
         if not hasattr(self, "password_expired"):
-            self.password_expired = lambda: None
+            self.password_expired = not_implemented_route
         if not hasattr(self, "forgot_password"):
-            self.forgot_password = lambda: None
+            self.forgot_password = not_implemented_route
         if not hasattr(self, "reset_password"):
-            self.reset_password = lambda username, token: None
+            self.reset_password = not_implemented_route
         if not hasattr(self, "login_success"):
-            self.login_success = lambda: None
+            self.login_success = not_implemented_route
 
         # Now set up the routes
         self.blueprint.route("/login/", methods=["GET", "POST"])(self.login)
