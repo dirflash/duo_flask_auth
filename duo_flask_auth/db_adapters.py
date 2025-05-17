@@ -12,7 +12,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import certifi  # noqa: F401
 import pymongo  # noqa: F401
-from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument  # noqa: F401
+from pymongo import (  # noqa: F401
+    MongoClient,
+    ReturnDocument,
+    database,
+)
+
+# pylint: disable=logging-fstring-interpolation
 
 
 class DatabaseAdapter(ABC):
@@ -204,8 +210,8 @@ class MongoDBAdapter(DatabaseAdapter):
                     - socket_timeout_ms: Timeout for operations (default: 45000)
         """
         self.config = config
-        self.client = None
-        self.db = None
+        self.client: Optional[MongoClient] = None
+        self.db: Optional[database.Database] = None
         self.logger = logging.getLogger("duo_flask_auth.db_adapters.MongoDBAdapter")
 
     def initialize(self, app=None) -> None:
@@ -236,7 +242,8 @@ class MongoDBAdapter(DatabaseAdapter):
             mongo_host = self.config.get("host")
             db_name = self.config.get("database")
 
-            # If db_name is not provided, check if there's a 'db_name' field (for backward compatibility)
+            # If db_name is not provided, check if there's a 'db_name' field (for
+            # backward compatibility)
             if not db_name:
                 db_name = self.config.get("db_name")
 
@@ -276,7 +283,11 @@ class MongoDBAdapter(DatabaseAdapter):
             self.client.admin.command("ismaster")
 
             # Get the database
-            self.db = self.client[db_name]
+            if isinstance(db_name, str):
+                self.db = self.client[db_name]
+            else:
+                self.logger.error("Database name must be a string, got: %r", db_name)
+                self.db = None
 
             self.logger.info(
                 f"Connected to MongoDB: {db_name} with connection pooling (max pool size: {pool_config['maxPoolSize']})"
@@ -527,7 +538,7 @@ class MongoDBAdapter(DatabaseAdapter):
         Returns:
             The user data as a dictionary, or None if not found.
         """
-        if not self.db:
+        if self.db is None:
             self.logger.error("MongoDB not connected")
             return None
 
@@ -550,7 +561,7 @@ class MongoDBAdapter(DatabaseAdapter):
             - Boolean indicating success/failure
             - User ID or error message
         """
-        if not self.db:
+        if self.db is None:
             self.logger.error("MongoDB not connected")
             return False, "Database not connected"
 
@@ -585,7 +596,7 @@ class MongoDBAdapter(DatabaseAdapter):
         Returns:
             True if successful, False otherwise.
         """
-        if not self.db:
+        if self.db is None:
             self.logger.error("MongoDB not connected")
             return False
 
@@ -665,7 +676,7 @@ class MongoDBAdapter(DatabaseAdapter):
         Returns:
             True if successful, False otherwise.
         """
-        if not self.db:
+        if self.db is None:
             self.logger.error("MongoDB not connected")
             return False
 
@@ -722,7 +733,7 @@ class MongoDBAdapter(DatabaseAdapter):
         Returns:
             True if successful, False otherwise.
         """
-        if not self.db:
+        if self.db is None:
             self.logger.error("MongoDB not connected")
             return False
 
@@ -748,7 +759,7 @@ class MongoDBAdapter(DatabaseAdapter):
         Returns:
             The user data if found, None otherwise.
         """
-        if not self.db:
+        if self.db is None:
             self.logger.error("MongoDB not connected")
             return None
 
@@ -790,7 +801,7 @@ class MongoDBAdapter(DatabaseAdapter):
         Returns:
             True if successful, False otherwise.
         """
-        if not self.db:
+        if self.db is None:
             self.logger.error("MongoDB not connected")
             return False
 
@@ -821,7 +832,7 @@ class MongoDBAdapter(DatabaseAdapter):
         Returns:
             A list of security events.
         """
-        if not self.db:
+        if self.db is None:
             self.logger.error("MongoDB not connected")
             return []
 
@@ -905,11 +916,9 @@ class MongoDBAdapter(DatabaseAdapter):
             # Check if the connection is still valid
             self.client.admin.command("ping")
 
-            # Get connection pool stats
-            stats = self.client.get_default_database_connection_pool_stats()
-
-            # Log pool stats
-            self.logger.debug(f"MongoDB connection pool stats: {stats}")
+            # PyMongo does not provide direct access to connection pool stats.
+            # If needed, you can log a successful ping as a health check.
+            self.logger.debug("MongoDB connection health check passed (ping successful)")
 
             return True
 
