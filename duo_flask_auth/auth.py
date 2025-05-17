@@ -28,7 +28,7 @@ from flask_login import (
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 
 # Define version directly to avoid import issues
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # Handle other imports gracefully for direct file execution vs package import
 try:

@@ -30,7 +30,7 @@ setup(
         "Source Code": "https://github.com/yourusername/duo-flask-auth",
     },
     classifiers=[
-        "Development Status :: 4 - Beta",
+        "Development Status :: 5 - Beta",
         "Framework :: Flask",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
