@@ -5,6 +5,7 @@ This module provides database adapter interfaces and implementations for differe
 """
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -56,6 +57,30 @@ class DatabaseAdapter(ABC):
             A tuple containing:
             - Boolean indicating success/failure
             - User ID or error message
+        """
+        pass
+
+    @abstractmethod
+    def list_users(
+        self,
+        filter_criteria: Optional[Dict[str, Any]] = None,
+        limit: int = 100,
+        skip: int = 0,
+        sort_by: str = "username",
+        sort_direction: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """
+        List users with optional filtering, pagination, and sorting.
+
+        Args:
+            filter_criteria: Optional dictionary of filter criteria
+            limit: Maximum number of users to return (default: 100)
+            skip: Number of users to skip (for pagination)
+            sort_by: Field to sort by (default: username)
+            sort_direction: Sort direction (1 for ascending, -1 for descending)
+
+        Returns:
+            List of user data dictionaries
         """
         pass
 
@@ -262,6 +287,10 @@ class MongoDBAdapter(DatabaseAdapter):
         """
         try:
             # Get the users collection
+            if self.db is None:
+                self.logger.error("MongoDB not connected")
+                return
+
             users_collection = self.db["users"]
 
             # Create indexes for users collection
@@ -434,7 +463,7 @@ class MongoDBAdapter(DatabaseAdapter):
             Dictionary with index names as keys and boolean values indicating
             whether each index exists and is correctly configured.
         """
-        if not self.db:
+        if self.db is not None:
             self.logger.error("MongoDB not connected")
             return {}
 
@@ -583,6 +612,62 @@ class MongoDBAdapter(DatabaseAdapter):
         except Exception as e:
             self.logger.error(f"Error updating user '{username}': {e}")
             return False
+
+    def list_users(
+        self,
+        filter_criteria: Optional[Dict[str, Any]] = None,
+        limit: int = 100,
+        skip: int = 0,
+        sort_by: str = "username",
+        sort_direction: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """
+        List users with optional filtering, pagination, and sorting.
+
+        Args:
+            filter_criteria: Optional dictionary of filter criteria
+            limit: Maximum number of users to return (default: 100)
+            skip: Number of users to skip (for pagination)
+            sort_by: Field to sort by (default: username)
+            sort_direction: Sort direction (1 for ascending, -1 for descending)
+
+        Returns:
+            List of user data dictionaries
+        """
+        if self.db is None:
+            self.logger.error("MongoDB not connected")
+            return []
+
+        try:
+            users_collection = self.db["users"]
+
+            # Use the filter criteria if provided, otherwise use an empty filter
+            query = filter_criteria or {}
+
+            # Create cursor with sorting and pagination
+            cursor = users_collection.find(query)
+
+            # Apply sorting if a valid sort field is provided
+            if sort_by:
+                cursor = cursor.sort(sort_by, sort_direction)
+
+            # Apply pagination
+            cursor = cursor.skip(skip).limit(limit)
+
+            # Get timing information for performance monitoring
+            start_time = time.time()
+            results = list(cursor)
+            query_time = time.time() - start_time
+
+            # Log query performance for large result sets
+            if len(results) > 50 or query_time > 0.5:
+                self.logger.info(f"Listed {len(results)} users in {query_time:.4f}s")
+
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Error listing users: {e}")
+            return []
 
     def delete_user(self, username: str) -> bool:
         """
@@ -1133,6 +1218,65 @@ class SQLAlchemyAdapter(DatabaseAdapter):
                 session.rollback()
                 session.close()
             return False
+
+    def list_users(
+        self,
+        filter_criteria: Optional[Dict[str, Any]] = None,
+        limit: int = 100,
+        skip: int = 0,
+        sort_by: str = "username",
+        sort_direction: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """
+        List users with optional filtering, pagination, and sorting.
+
+        Args:
+            filter_criteria: Optional dictionary of filter criteria
+            limit: Maximum number of users to return (default: 100)
+            skip: Number of users to skip (for pagination)
+            sort_by: Field to sort by (default: username)
+            sort_direction: Sort direction (1 for ascending, -1 for descending)
+
+        Returns:
+            List of user data dictionaries
+        """
+        if not self.session_factory:
+            self.logger.error("SQLAlchemy not initialized")
+            return []
+
+        try:
+            session = self.session_factory()
+
+            # Start query
+            query = session.query(self.User)
+
+            # Apply filters if provided
+            if filter_criteria:
+                for key, value in filter_criteria.items():
+                    if hasattr(self.User, key):
+                        query = query.filter(getattr(self.User, key) == value)
+
+            # Apply sorting
+            if hasattr(self.User, sort_by):
+                order_attr = getattr(self.User, sort_by)
+                if sort_direction < 0:
+                    order_attr = order_attr.desc()
+                query = query.order_by(order_attr)
+
+            # Apply pagination
+            query = query.offset(skip).limit(limit)
+
+            # Execute query and convert to dictionaries
+            users = [user.to_dict() for user in query.all()]
+
+            session.close()
+            return users
+
+        except Exception as e:
+            self.logger.error(f"Error listing users: {e}")
+            if session:
+                session.close()
+            return []
 
     def delete_user(self, username: str) -> bool:
         """

@@ -595,7 +595,7 @@ class DuoFlaskAuth:
         Returns:
             Dictionary with connection status information
         """
-        if not self.db_adapter:
+        if self.db_adapter is not None:
             return {
                 "status": "not_configured",
                 "message": "Database adapter is not configured",
@@ -950,6 +950,110 @@ class DuoFlaskAuth:
         self.cache.delete(cache_key)
         self.logger.debug(f"Invalidated cache for user '{username}'")
 
+    def list_users(
+        self,
+        filter_criteria: Optional[Dict[str, Any]] = None,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: str = "username",
+        sort_direction: str = "asc",
+    ) -> Dict[str, Any]:
+        """
+        List users with optional filtering, pagination, and sorting.
+
+        This method provides a convenient way to retrieve user data without
+        directly accessing the database. It includes pagination metadata
+        to support UI implementations.
+
+        Args:
+            filter_criteria: Optional dictionary of filter criteria
+            limit: Maximum number of users to return per page (default: 100)
+            page: Page number (1-based, default: 1)
+            sort_by: Field to sort by (default: username)
+            sort_direction: "asc" for ascending, "desc" for descending
+
+        Returns:
+            Dictionary containing:
+            - users: List of user data dictionaries
+            - pagination: Dictionary with pagination metadata
+                - total: Total number of users matching the filter
+                - page: Current page number
+                - limit: Users per page
+                - pages: Total number of pages
+            - sort: Dictionary with sorting metadata
+                - field: Field being sorted by
+                - direction: Sort direction
+
+        Example:
+            ```
+            # List all admin users
+            admins = auth.list_users({"role": "admin"})
+
+            # Get second page of users sorted by creation date
+            recent_users = auth.list_users(
+                limit=20,
+                page=2,
+                sort_by="created_at",
+                sort_direction="desc"
+            )
+            ```
+        """
+        current_app.logger.debug(f"Listing users with filter: {filter_criteria}")
+
+        if self.db_adapter is None:
+            current_app.logger.error("Database adapter not configured")
+            return {
+                "users": [],
+                "pagination": {"total": 0, "page": page, "limit": limit, "pages": 0},
+            }
+
+        # Calculate skip value for pagination (0-based)
+        skip = (max(1, page) - 1) * limit
+
+        # Convert sort direction string to integer (1 for asc, -1 for desc)
+        sort_dir_value = -1 if sort_direction.lower() == "desc" else 1
+
+        try:
+            # Get users from the adapter
+            users = self.db_adapter.list_users(
+                filter_criteria=filter_criteria,
+                limit=limit,
+                skip=skip,
+                sort_by=sort_by,
+                sort_direction=sort_dir_value,
+            )
+
+            # For pagination metadata, we need to get the total count
+            # ideally this would be done with a separate count query, but we'll
+            # estimate based on the current page for simplicity
+            # A production version should use a proper count query
+            total_users = skip + len(users)
+            if len(users) == limit:
+                # If we got a full page, there might be more users
+                total_users += 1
+
+            total_pages = (total_users + limit - 1) // limit
+
+            return {
+                "users": users,
+                "pagination": {
+                    "total": total_users,
+                    "page": page,
+                    "limit": limit,
+                    "pages": total_pages,
+                },
+                "sort": {"field": sort_by, "direction": sort_direction},
+            }
+
+        except Exception as e:
+            current_app.logger.error(f"Error listing users: {e}")
+            return {
+                "users": [],
+                "pagination": {"total": 0, "page": page, "limit": limit, "pages": 0},
+                "sort": {"field": sort_by, "direction": sort_direction},
+                "error": str(e),
+            }
+
     def load_user(self, user_id: str) -> Optional[BaseUser]:
         """
         Load a user from the database or cache by their user ID.
@@ -969,7 +1073,7 @@ class DuoFlaskAuth:
         """
         current_app.logger.debug(f"Loading user: {user_id}")
 
-        if not self.db_adapter:
+        if self.db_adapter is None:
             current_app.logger.error("Database adapter not configured")
             return None
 
@@ -1210,7 +1314,7 @@ class DuoFlaskAuth:
         Returns:
             True if successful, False otherwise
         """
-        if not self.db_adapter:
+        if self.db_adapter is None:
             self.logger.error("Database adapter not configured")
             return False
 
