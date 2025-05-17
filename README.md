@@ -25,13 +25,13 @@ A reusable Flask authentication library with Duo MFA support, enhanced security 
 ## Installation
 
 ```bash
-pip install duo-flask-auth
+pip install duo_flask_auth
 ```
 
 Or install directly from the repository:
 
 ```bash
-pip install git+https://github.com/dirflash/duo-flask-auth.git
+pip install git+https://github.com/dirflash/duo_flask_auth.git
 ```
 
 ## Requirements
