@@ -6,7 +6,7 @@ A reusable Flask authentication library with Duo MFA support, enhanced security 
 
 - User authentication with username and password
 - Duo MFA integration using Duo Universal Prompt
-- Multiple database backend support (MongoDB, SQLAlchemy)
+- MongoDB database backend support (SQLAlchemy support planned for future releases)
 - Customizable user model with extensibility
 - Configurable routes to match your application's URL structure
 - Comprehensive security features:
@@ -24,19 +24,25 @@ A reusable Flask authentication library with Duo MFA support, enhanced security 
 
 ## Installation
 
+### Standard Installation
+
 ```bash
 pip install duo_flask_auth
 ```
 
-Or install directly from the repository:
+### Development Installation
+
+For development or when installing from the repository, use:
 
 ```bash
-pip install git+https://github.com/dirflash/duo_flask_auth.git
+# Install directly from the repository with a specific package name
+pip install git+https://github.com/dirflash/duo_flask_auth.git#egg=duo_flask_auth
 
 # Install required dependencies
-pip install duo-universal
-pip install flask-login
+pip install duo-universal flask-login
 ```
+
+If you encounter `UNKNOWN @ git+https://github.com/dirflash/duo_flask_auth.git` in your pip freeze output, it means the package metadata isn't being recognized properly. To fix this, create a `pyproject.toml` file in the root of your project with the proper metadata (see Project Setup section below).
 
 ## Dependencies
 
@@ -53,9 +59,46 @@ This package depends on the following:
 - Flask-Login 0.5+
 - Flask-WTF 1.0+ (for CSRF protection)
 - Duo Universal SDK 1.0+ (for MFA functionality)
-- Database dependencies (based on adapter choice):
+- Database dependencies:
   - MongoDB: PyMongo 4.0+
-  - SQL: SQLAlchemy 1.4+
+
+## Project Setup
+
+If you're developing this package or installing from the repository, ensure you have a proper `pyproject.toml` file in the root directory:
+
+```toml
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "duo_flask_auth"
+version = "0.5.0"
+authors = [
+    {name = "Aaron Davis", email = "aaron.e.davis@gmail.com"},
+]
+description = "Flask authentication library with Duo MFA support"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "Flask>=2.0.0",
+    "Flask-Login>=0.5.0",
+    "Flask-WTF>=1.0.0",
+    "duo-universal>=1.0.0",
+    "pymongo>=4.0.0",
+    "certifi>=2021.10.8",
+    "Werkzeug>=2.0.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/dirflash/duo_flask_auth"
+"Bug Tracker" = "https://github.com/dirflash/duo_flask_auth/issues"
+```
 
 ## Quick Start
 
@@ -230,9 +273,9 @@ auth = DuoFlaskAuth(
 
 The library has been designed with flexibility in mind, allowing you to adapt it to different applications and environments.
 
-### 1. Multiple Database Backend Support
+### 1. Database Backend Support
 
-Choose the database backend that works best for your application:
+Currently, MongoDB is the only supported database backend:
 
 ```python
 # Using MongoDB (default)
@@ -246,25 +289,7 @@ auth = DuoFlaskAuth(
     }
 )
 
-# Using SQLAlchemy with SQLite
-auth = DuoFlaskAuth(
-    app,
-    db_adapter='sqlalchemy',
-    db_config={
-        'url': 'sqlite:///users.db'
-    }
-)
-
-# Using SQLAlchemy with PostgreSQL
-auth = DuoFlaskAuth(
-    app,
-    db_adapter='sqlalchemy',
-    db_config={
-        'url': 'postgresql://user:pass@localhost/auth_db'
-    }
-)
-
-# Using a custom adapter
+# Using a custom adapter (advanced usage)
 class MyCustomAdapter(DatabaseAdapter):
     # Implement the required methods...
 
@@ -273,6 +298,8 @@ auth = DuoFlaskAuth(
     db_adapter=MyCustomAdapter()
 )
 ```
+
+Note: SQLAlchemy support is planned for future releases.
 
 ### 2. Customizable User Model
 
@@ -520,12 +547,6 @@ def create_app():
 - `connect_timeout_ms`: Timeout for initial connection (default: 30000)
 - `socket_timeout_ms`: Timeout for operations (default: 45000)
 
-#### SQLAlchemy
-
-- `url`: Database URL (e.g., 'sqlite:///users.db', 'postgresql://user:pass@localhost/dbname')
-- `echo`: Enable SQL query logging (default: False)
-- `pool_size`: Connection pool size (default: 10)
-
 ### Duo MFA Configuration
 
 - `client_id`: Duo application client ID
@@ -563,7 +584,7 @@ The main class that provides authentication functionality.
 
 - `app`: Flask application instance (optional)
 - `db_config`: Database configuration dictionary (optional)
-- `db_adapter`: Database adapter type ('mongodb', 'sqlalchemy') or instance (optional)
+- `db_adapter`: Database adapter instance (optional)
 - `duo_config`: Duo MFA configuration dictionary (optional)
 - `template_folder`: Folder for auth templates (default: 'templates')
 - `routes_prefix`: Prefix for authentication routes (default: '/auth')
@@ -616,44 +637,6 @@ Base class for user models in the system.
 - `reset_token_expires`: Expiration timestamp for the reset token
 - `password_expired`: Whether the password has expired
 - `locked_until`: When the account lockout expires
-
-#### Methods
-
-- `__init__(user_id, username, password_hash, mfa_enabled=False, **kwargs)`: Initialize a user
-- `check_password(password)`: Verify if the provided password matches the stored hash
-- `get_id()`: Return the user ID for Flask-Login
-- `is_account_locked`: Property that checks if the account is locked
-
-### DatabaseAdapter
-
-Abstract base class for database adapters.
-
-#### Key Methods
-
-- `initialize(app=None)`: Initialize the database adapter
-- `get_user(username)`: Retrieve a user by username
-- `create_user(user_data)`: Create a new user
-- `update_user(username, update_data)`: Update a user's data
-- `delete_user(username)`: Delete a user
-- `increment_login_attempts(username)`: Increment login attempts counter
-- `reset_login_attempts(username)`: Reset login attempts counter
-- `get_user_by_reset_token(token)`: Get a user by reset token
-- `log_security_event(event_data)`: Log a security event
-- `get_security_events(filters=None, limit=100)`: Get security events
-- `verify_indexes()`: Verify that all required indexes exist
-
-### Cache
-
-Abstract base class for cache implementations.
-
-#### Key Methods
-
-- `get(key)`: Get a value from the cache
-- `set(key, value, ttl=300)`: Set a value in the cache
-- `delete(key)`: Delete a value from the cache
-- `clear()`: Clear all cached values
-- `get_or_set(key, callback, ttl=300)`: Get a value from the cache, or set it if not found
-- `get_stats()`: Get cache statistics
 
 ## MongoDB Schema
 
