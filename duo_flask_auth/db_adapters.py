@@ -207,10 +207,6 @@ class MongoDBAdapter(DatabaseAdapter):
         self.client = None
         self.db = None
         self.logger = logging.getLogger("duo_flask_auth.db_adapters.MongoDBAdapter")
-        # Store the pymongo constants when adapter is initialized
-        # This ensures they're available throughout the class
-        self._ASCENDING = ASCENDING
-        self._DESCENDING = DESCENDING
 
     def initialize(self, app=None) -> None:
         """
@@ -301,9 +297,11 @@ class MongoDBAdapter(DatabaseAdapter):
                 self.logger.error("MongoDB not connected")
                 return
 
-            # Use the stored class variables to access pymongo constants
-            ascending = self._ASCENDING
-            descending = self._DESCENDING
+            # Use direct numeric values instead of constants
+            # 1 = ascending, -1 = descending
+            # This avoids any issues with importing pymongo constants
+            ascending = 1
+            descending = -1
 
             users_collection = self.db["users"]
 
