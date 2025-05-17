@@ -2,30 +2,28 @@
 requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.black]
-line-length = 100
-target-version = ['py37', 'py38', 'py39', 'py310']
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
+[project]
+name = "duo_flask_auth"
+version = "0.5.0"
+authors = [{ name = "Aaron Davis", email = "aaron.e.davis@gmail.com" }]
+description = "Flask authentication library with Duo MFA support, enhanced security features, flexibility, and performance optimizations"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "Flask>=2.0.0",
+  "Flask-Login>=0.5.0",
+  "Flask-WTF>=1.0.0",
+  "duo-universal>=1.0.0",
+  "pymongo>=4.0.0",
+  "certifi>=2021.10.8",
+  "Werkzeug>=2.0.0",
+]
 
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = "test_*.py"
-addopts = "-v --cov=duo_flask_auth --cov-report=term-missing"
+[project.urls]
+"Homepage" = "https://github.com/dirflash/duo_flask_auth"
+"Bug Tracker" = "https://github.com/dirflash/duo_flask_auth/issues"
