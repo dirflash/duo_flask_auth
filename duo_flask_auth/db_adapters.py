@@ -7,10 +7,10 @@ This module provides database adapter interfaces and implementations for differe
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import certifi
-from pymongo import MongoClient, ASCENDING
+from pymongo import ASCENDING, MongoClient
 
 
 class DatabaseAdapter(ABC):
@@ -196,7 +196,7 @@ class MongoDBAdapter(DatabaseAdapter):
         self._connect()
 
         # Create indexes if db is available
-        if self.db:
+        if self.db is not None:
             self._create_indexes()
 
     def _connect(self) -> None:
@@ -213,6 +213,13 @@ class MongoDBAdapter(DatabaseAdapter):
             # Check if all required parameters are provided
             if not all([db_un, db_pw, mongo_host, db_name]):
                 self.logger.error("MongoDB configuration is incomplete")
+                # log the missing parameters
+                missing_params = [
+                    param
+                    for param in ["username", "password", "host", "database"]
+                    if not self.config.get(param)
+                ]
+                self.logger.error(f"Missing MongoDB configuration parameters: {missing_params}")
                 return
 
             # Extract connection pooling configuration
@@ -867,9 +874,18 @@ class SQLAlchemyAdapter(DatabaseAdapter):
         # Import SQLAlchemy here to avoid requiring it for users who don't use this adapter
         try:
             import sqlalchemy
-            from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Text, ForeignKey
+            from sqlalchemy import (
+                Boolean,
+                Column,
+                DateTime,
+                ForeignKey,
+                Integer,
+                String,
+                Text,
+                create_engine,
+            )
             from sqlalchemy.ext.declarative import declarative_base
-            from sqlalchemy.orm import sessionmaker, relationship
+            from sqlalchemy.orm import relationship, sessionmaker
 
             self.sqlalchemy = sqlalchemy
             self.create_engine = create_engine

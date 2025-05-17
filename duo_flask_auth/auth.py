@@ -132,7 +132,7 @@ except ImportError:
             pass
 
         # Define a fallback version
-        __version__ = "0.4.0"
+        __version__ = "0.5.0"
 
 
 class DuoFlaskAuth:
