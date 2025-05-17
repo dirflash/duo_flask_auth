@@ -31,7 +31,7 @@ pip install duo-flask-auth
 Or install directly from the repository:
 
 ```bash
-pip install git+https://github.com/yourusername/duo-flask-auth.git
+pip install git+https://github.com/dirflash/duo-flask-auth.git
 ```
 
 ## Requirements
