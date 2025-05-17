@@ -10,7 +10,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from pymongo import ASCENDING, DESCENDING
+import certifi  # noqa: F401
+from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument  # noqa: F401
 
 
 class DatabaseAdapter(ABC):
@@ -232,7 +233,7 @@ class MongoDBAdapter(DatabaseAdapter):
             db_un = self.config.get("username")
             db_pw = self.config.get("password")
             mongo_host = self.config.get("host")
-            db_name = self.config.get("database")  # Check both 'database' and 'db_name'
+            db_name = self.config.get("database")
 
             # If db_name is not provided, check if there's a 'db_name' field (for backward compatibility)
             if not db_name:
@@ -251,8 +252,35 @@ class MongoDBAdapter(DatabaseAdapter):
                 self.logger.error(f"Missing MongoDB configuration parameters: {missing_params}")
                 return
 
-            # Rest of the method remains the same
-            # ...
+            # Extract connection pooling configuration
+            pool_config = {
+                "maxPoolSize": self.config.get("pool_size", 50),
+                "minPoolSize": self.config.get("min_pool_size", 10),
+                "maxIdleTimeMS": self.config.get("max_idle_time_ms", 60000),
+                "waitQueueTimeoutMS": self.config.get("wait_queue_timeout_ms", 2000),
+                "connectTimeoutMS": self.config.get("connect_timeout_ms", 30000),
+                "socketTimeoutMS": self.config.get("socket_timeout_ms", 45000),
+                "serverSelectionTimeoutMS": self.config.get("server_selection_timeout_ms", 5000),
+            }
+
+            # Build connection URL
+            mongo_url = f"mongodb+srv://{db_un}:{db_pw}@{mongo_host}/{db_name}"
+
+            # Connect to MongoDB with connection pooling configuration
+            self.client = MongoClient(
+                mongo_url + "?retryWrites=true&w=majority", tlsCAFile=certifi.where(), **pool_config
+            )
+
+            # Validate connection by requesting server info
+            self.client.admin.command("ismaster")
+
+            # Get the database
+            self.db = self.client[db_name]
+
+            self.logger.info(
+                f"Connected to MongoDB: {db_name} with connection pooling (max pool size: {pool_config['maxPoolSize']})"
+            )
+
         except Exception as e:
             self.logger.error(f"Error connecting to MongoDB: {e}")
             self.client = None
@@ -653,7 +681,7 @@ class MongoDBAdapter(DatabaseAdapter):
 
     def increment_login_attempts(self, username: str) -> int:
         """
-        Increment the login attempts counter for a user.
+        Increment the login attempts counter for a user with index optimization.
 
         Args:
             username: The username of the user.
@@ -661,23 +689,24 @@ class MongoDBAdapter(DatabaseAdapter):
         Returns:
             The new number of login attempts.
         """
-        if not self.db:
+        if self.db is None:
             self.logger.error("MongoDB not connected")
             return 0
 
         try:
             users_collection = self.db["users"]
-            result = users_collection.update_one(
-                {"username": username},
-                {"$inc": {"login_attempts": 1}}
+
+            # Use findAndModify (findOneAndUpdate) to atomically update and return the value
+            # This is more efficient than doing separate update and find operations
+            result = users_collection.find_one_and_update(
+                {"username": username},  # Uses the username_idx index
+                {"$inc": {"login_attempts": 1}},  # Increment login_attempts by 1
+                projection={"login_attempts": 1},  # Only return the login_attempts field
+                return_document=ReturnDocument.AFTER,  # Use the imported ReturnDocument
             )
 
-            if result.modified_count > 0:
-                # Get the updated user to return the new count
-                user = users_collection.find_one({"username": username})
-                return user.get("login_attempts", 0) if user else 0
-            else:
-                return 0
+            # Return the new login attempts count, or 0 if the update failed
+            return result.get("login_attempts", 0) if result else 0
 
         except Exception as e:
             self.logger.error(f"Error incrementing login attempts for user '{username}': {e}")
