@@ -165,9 +165,9 @@ class DatabaseAdapter(ABC):
         pass
 
     @abstractmethod
-    def get_security_events(self,
-                          filters: Optional[Dict[str, Any]] = None,
-                          limit: int = 100) -> List[Dict[str, Any]]:
+    def get_security_events(
+        self, filters: Optional[Dict[str, Any]] = None, limit: int = 100
+    ) -> List[Dict[str, Any]]:
         """
         Get security events.
 
@@ -297,9 +297,10 @@ class MongoDBAdapter(DatabaseAdapter):
                 self.logger.error("MongoDB not connected")
                 return
 
-            # Use direct numeric values instead of constants
-            ascending = 1  # MongoDB ascending sort
-            descending = -1  # MongoDB descending sort
+            # Use pymongo's imported constants
+            # This was the issue: using constants without properly referencing the imported ones
+            ascending = ASCENDING  # Use the imported ASCENDING
+            descending = DESCENDING  # Use the imported DESCENDING
 
             users_collection = self.db["users"]
 
@@ -385,8 +386,8 @@ class MongoDBAdapter(DatabaseAdapter):
                         timeseries={
                             "timeField": "timestamp",
                             "metaField": "username",
-                            "granularity": "minutes"
-                        }
+                            "granularity": "minutes",
+                        },
                     )
                     self.logger.info("Created security_events as a time series collection")
                 except Exception as e:
@@ -435,7 +436,9 @@ class MongoDBAdapter(DatabaseAdapter):
             )
             index_names.append(index_name)
 
-            self.logger.info(f"Created {len(index_names)} MongoDB indexes: {', '.join(index_names)}")
+            self.logger.info(
+                f"Created {len(index_names)} MongoDB indexes: {', '.join(index_names)}"
+            )
 
         except Exception as e:
             self.logger.error(f"Error creating MongoDB indexes: {e}")
@@ -448,9 +451,7 @@ class MongoDBAdapter(DatabaseAdapter):
             Dictionary with index names as keys and boolean values indicating
             whether each index exists and is correctly configured.
         """
-        if (
-            self.db is None
-        ):  # Changed from "if self.db is not None:" (looks like a bug in original code)
+        if self.db is None:  # Fixed the logic issue here
             self.logger.error("MongoDB not connected")
             return {}
 
@@ -466,15 +467,15 @@ class MongoDBAdapter(DatabaseAdapter):
                     "role_idx",
                     "account_status_idx",
                     "password_age_idx",
-                    "login_attempts_idx"
+                    "login_attempts_idx",
                 ],
                 "security_events": [
                     "timestamp_idx",
                     "username_events_idx",
                     "event_type_idx",
                     "user_event_time_idx",
-                    "ip_address_idx"
-                ]
+                    "ip_address_idx",
+                ],
             }
 
             # Initialize result dictionary
@@ -491,7 +492,7 @@ class MongoDBAdapter(DatabaseAdapter):
 
                 # Get existing indexes in the collection
                 collection = self.db[collection_name]
-                existing_indexes = [idx.get('name') for idx in collection.list_indexes()]
+                existing_indexes = [idx.get("name") for idx in collection.list_indexes()]
 
                 # Mark existing indexes as present
                 for idx in indexes:
@@ -589,10 +590,7 @@ class MongoDBAdapter(DatabaseAdapter):
 
         try:
             users_collection = self.db["users"]
-            result = users_collection.update_one(
-                {"username": username},
-                {"$set": update_data}
-            )
+            result = users_collection.update_one({"username": username}, {"$set": update_data})
 
             return result.modified_count > 0
 
@@ -730,8 +728,7 @@ class MongoDBAdapter(DatabaseAdapter):
         try:
             users_collection = self.db["users"]
             result = users_collection.update_one(
-                {"username": username},
-                {"$set": {"login_attempts": 0}}
+                {"username": username}, {"$set": {"login_attempts": 0}}
             )
 
             return result.modified_count > 0
@@ -762,11 +759,7 @@ class MongoDBAdapter(DatabaseAdapter):
             # The $gt comparison on reset_token_expires uses the TTL index
             query = {
                 "reset_token": token,
-                "reset_token_expires": {
-                    "$exists": True,
-                    "$ne": None,
-                    "$gt": datetime.utcnow()
-                }
+                "reset_token_expires": {"$exists": True, "$ne": None, "$gt": datetime.utcnow()},
             }
 
             # Execute query with explain plan to verify index usage
@@ -814,9 +807,9 @@ class MongoDBAdapter(DatabaseAdapter):
             self.logger.error(f"Error logging security event: {e}")
             return False
 
-    def get_security_events(self,
-                        filters: Optional[Dict[str, Any]] = None,
-                        limit: int = 100) -> List[Dict[str, Any]]:
+    def get_security_events(
+        self, filters: Optional[Dict[str, Any]] = None, limit: int = 100
+    ) -> List[Dict[str, Any]]:
         """
         Get security events using optimized query with indexes.
 
@@ -877,11 +870,15 @@ class MongoDBAdapter(DatabaseAdapter):
             query_time = time.time() - start_time
 
             # Log query performance
-            self.logger.debug(f"Security events query returned {len(results)} results in {query_time:.4f}s")
+            self.logger.debug(
+                f"Security events query returned {len(results)} results in {query_time:.4f}s"
+            )
 
             # If query is slow, log a warning
             if query_time > 0.5:  # More than 500ms is considered slow
-                self.logger.warning(f"Slow security events query: {query_time:.4f}s for filters: {filters}")
+                self.logger.warning(
+                    f"Slow security events query: {query_time:.4f}s for filters: {filters}"
+                )
 
                 # Log explain plan for slow queries
                 explain_plan = security_events_collection.find(query).explain()
@@ -905,7 +902,7 @@ class MongoDBAdapter(DatabaseAdapter):
 
         try:
             # Check if the connection is still valid
-            self.client.admin.command('ping')
+            self.client.admin.command("ping")
 
             # Get connection pool stats
             stats = self.client.get_default_database_connection_pool_stats()
@@ -974,7 +971,9 @@ class SQLAlchemyAdapter(DatabaseAdapter):
             self.relationship = relationship
 
         except ImportError:
-            self.logger.error("SQLAlchemy is not installed. Please install it with: pip install sqlalchemy")
+            self.logger.error(
+                "SQLAlchemy is not installed. Please install it with: pip install sqlalchemy"
+            )
 
     def initialize(self, app=None) -> None:
         """
@@ -986,21 +985,19 @@ class SQLAlchemyAdapter(DatabaseAdapter):
         if app:
             app.logger.info("Initializing SQLAlchemy adapter")
 
-        if not hasattr(self, 'sqlalchemy'):
+        if not hasattr(self, "sqlalchemy"):
             self.logger.error("SQLAlchemy is not installed.")
             return
 
         # Extract configuration
-        url = self.config.get('url')
+        url = self.config.get("url")
         if not url:
             self.logger.error("SQLAlchemy URL is required")
             return
 
         # Create engine
         self.engine = self.create_engine(
-            url,
-            echo=self.config.get('echo', False),
-            pool_size=self.config.get('pool_size', 10)
+            url, echo=self.config.get("echo", False), pool_size=self.config.get("pool_size", 10)
         )
 
         # Create base class
@@ -1021,9 +1018,10 @@ class SQLAlchemyAdapter(DatabaseAdapter):
         """
         Define SQLAlchemy models.
         """
+
         # Define User model
         class User(self.Base):
-            __tablename__ = 'users'
+            __tablename__ = "users"
 
             id = self.Column(self.Integer, primary_key=True)
             username = self.Column(self.String(100), unique=True, nullable=False)
@@ -1031,7 +1029,7 @@ class SQLAlchemyAdapter(DatabaseAdapter):
             created_by = self.Column(self.String(100))
             created_at = self.Column(self.DateTime, default=datetime.utcnow)
             is_active = self.Column(self.Boolean, default=True)
-            role = self.Column(self.String(50), default='user')
+            role = self.Column(self.String(50), default="user")
             last_password_change = self.Column(self.DateTime, default=datetime.utcnow)
             account_id = self.Column(self.String(100), unique=True)
             login_attempts = self.Column(self.Integer, default=0)
@@ -1046,28 +1044,28 @@ class SQLAlchemyAdapter(DatabaseAdapter):
             def to_dict(self):
                 """Convert model to dictionary."""
                 return {
-                    'id': self.id,
-                    'username': self.username,
-                    'password_hash': self.password_hash,
-                    'created_by': self.created_by,
-                    'created_at': self.created_at,
-                    'is_active': self.is_active,
-                    'role': self.role,
-                    'last_password_change': self.last_password_change,
-                    'account_id': self.account_id,
-                    'login_attempts': self.login_attempts,
-                    'creation_ip': self.creation_ip,
-                    'mfa_enabled': self.mfa_enabled,
-                    'last_login': self.last_login,
-                    'email_verified': self.email_verified,
-                    'reset_token': self.reset_token,
-                    'reset_token_expires': self.reset_token_expires,
-                    'locked_until': self.locked_until
+                    "id": self.id,
+                    "username": self.username,
+                    "password_hash": self.password_hash,
+                    "created_by": self.created_by,
+                    "created_at": self.created_at,
+                    "is_active": self.is_active,
+                    "role": self.role,
+                    "last_password_change": self.last_password_change,
+                    "account_id": self.account_id,
+                    "login_attempts": self.login_attempts,
+                    "creation_ip": self.creation_ip,
+                    "mfa_enabled": self.mfa_enabled,
+                    "last_login": self.last_login,
+                    "email_verified": self.email_verified,
+                    "reset_token": self.reset_token,
+                    "reset_token_expires": self.reset_token_expires,
+                    "locked_until": self.locked_until,
                 }
 
         # Define SecurityEvent model
         class SecurityEvent(self.Base):
-            __tablename__ = 'security_events'
+            __tablename__ = "security_events"
 
             id = self.Column(self.Integer, primary_key=True)
             timestamp = self.Column(self.DateTime, default=datetime.utcnow)
@@ -1080,14 +1078,15 @@ class SQLAlchemyAdapter(DatabaseAdapter):
             def to_dict(self):
                 """Convert model to dictionary."""
                 import json
+
                 return {
-                    'id': self.id,
-                    'timestamp': self.timestamp,
-                    'event_type': self.event_type,
-                    'username': self.username,
-                    'ip_address': self.ip_address,
-                    'user_agent': self.user_agent,
-                    'details': json.loads(self.details) if self.details else {}
+                    "id": self.id,
+                    "timestamp": self.timestamp,
+                    "event_type": self.event_type,
+                    "username": self.username,
+                    "ip_address": self.ip_address,
+                    "user_agent": self.user_agent,
+                    "details": json.loads(self.details) if self.details else {},
                 }
 
         # Store models
@@ -1139,7 +1138,9 @@ class SQLAlchemyAdapter(DatabaseAdapter):
             session = self.session_factory()
 
             # Check if user already exists
-            existing_user = session.query(self.User).filter_by(username=user_data["username"]).first()
+            existing_user = (
+                session.query(self.User).filter_by(username=user_data["username"]).first()
+            )
             if existing_user:
                 session.close()
                 return False, f"User '{user_data['username']}' already exists"
@@ -1394,10 +1395,14 @@ class SQLAlchemyAdapter(DatabaseAdapter):
             session = self.session_factory()
 
             # Find the user by token
-            user = session.query(self.User).filter(
-                self.User.reset_token == token,
-                self.User.reset_token_expires > datetime.utcnow()
-            ).first()
+            user = (
+                session.query(self.User)
+                .filter(
+                    self.User.reset_token == token,
+                    self.User.reset_token_expires > datetime.utcnow(),
+                )
+                .first()
+            )
 
             session.close()
 
@@ -1433,6 +1438,7 @@ class SQLAlchemyAdapter(DatabaseAdapter):
             # Convert details to JSON string if present
             if "details" in event_data and isinstance(event_data["details"], dict):
                 import json
+
                 event_data["details"] = json.dumps(event_data["details"])
 
             # Create new event object
@@ -1452,9 +1458,9 @@ class SQLAlchemyAdapter(DatabaseAdapter):
                 session.close()
             return False
 
-    def get_security_events(self,
-                          filters: Optional[Dict[str, Any]] = None,
-                          limit: int = 100) -> List[Dict[str, Any]]:
+    def get_security_events(
+        self, filters: Optional[Dict[str, Any]] = None, limit: int = 100
+    ) -> List[Dict[str, Any]]:
         """
         Get security events.
 
@@ -1513,9 +1519,9 @@ def get_db_adapter(adapter_type: str, config: Dict[str, Any]) -> DatabaseAdapter
     Raises:
         ValueError: If the adapter type is not supported
     """
-    if adapter_type.lower() == 'mongodb':
+    if adapter_type.lower() == "mongodb":
         return MongoDBAdapter(config)
-    elif adapter_type.lower() == 'sqlalchemy':
+    elif adapter_type.lower() == "sqlalchemy":
         return SQLAlchemyAdapter(config)
     else:
         raise ValueError(f"Unsupported database adapter type: {adapter_type}")
