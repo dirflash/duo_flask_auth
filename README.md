@@ -32,7 +32,19 @@ Or install directly from the repository:
 
 ```bash
 pip install git+https://github.com/dirflash/duo_flask_auth.git
+
+# Install required dependencies
+pip install duo-universal
+pip install flask-login
 ```
+
+## Dependencies
+
+This package depends on the following:
+
+- Flask
+- duo-universal
+- flask-login
 
 ## Requirements
 
@@ -52,6 +64,7 @@ Here's a minimal example to get you started:
 ```python
 from flask import Flask, redirect, url_for
 from duo_flask_auth import DuoFlaskAuth
+from flask_login import LoginManager, current_user
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key'  # Replace with a secure secret key
