@@ -42,8 +42,6 @@ pip install git+https://github.com/dirflash/duo_flask_auth.git#egg=duo_flask_aut
 pip install duo-universal flask-login
 ```
 
-If you encounter `UNKNOWN @ git+https://github.com/dirflash/duo_flask_auth.git` in your pip freeze output, it means the package metadata isn't being recognized properly. To fix this, create a `pyproject.toml` file in the root of your project with the proper metadata (see Project Setup section below).
-
 ## Dependencies
 
 This package depends on the following:
@@ -61,44 +59,6 @@ This package depends on the following:
 - Duo Universal SDK 1.0+ (for MFA functionality)
 - Database dependencies:
   - MongoDB: PyMongo 4.0+
-
-## Project Setup
-
-If you're developing this package or installing from the repository, ensure you have a proper `pyproject.toml` file in the root directory:
-
-```toml
-[build-system]
-requires = ["setuptools>=42", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "duo_flask_auth"
-version = "0.5.0"
-authors = [
-    {name = "Aaron Davis", email = "aaron.e.davis@gmail.com"},
-]
-description = "Flask authentication library with Duo MFA support"
-readme = "README.md"
-requires-python = ">=3.7"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-]
-dependencies = [
-    "Flask>=2.0.0",
-    "Flask-Login>=0.5.0",
-    "Flask-WTF>=1.0.0",
-    "duo-universal>=1.0.0",
-    "pymongo>=4.0.0",
-    "certifi>=2021.10.8",
-    "Werkzeug>=2.0.0",
-]
-
-[project.urls]
-"Homepage" = "https://github.com/dirflash/duo_flask_auth"
-"Bug Tracker" = "https://github.com/dirflash/duo_flask_auth/issues"
-```
 
 ## Quick Start
 
