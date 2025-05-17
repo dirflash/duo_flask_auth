@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import certifi  # noqa: F401
+import pymongo  # noqa: F401
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument  # noqa: F401
 
 
@@ -296,9 +297,9 @@ class MongoDBAdapter(DatabaseAdapter):
                 self.logger.error("MongoDB not connected")
                 return
 
-            # Define sorting directions in case imports fail
-            ascending = ASCENDING if "ASCENDING" in globals() else 1
-            descending = DESCENDING if "DESCENDING" in globals() else -1
+            # Use direct numeric values instead of constants
+            ascending = 1  # MongoDB ascending sort
+            descending = -1  # MongoDB descending sort
 
             users_collection = self.db["users"]
 
@@ -1304,7 +1305,7 @@ class SQLAlchemyAdapter(DatabaseAdapter):
 
     def increment_login_attempts(self, username: str) -> int:
         """
-        Increment the login attempts counter for a user with index optimization.
+        Increment the login attempts counter for a user.
 
         Args:
             username: The username of the user.
@@ -1312,32 +1313,36 @@ class SQLAlchemyAdapter(DatabaseAdapter):
         Returns:
             The new number of login attempts.
         """
-        if not self.db:
-            self.logger.error("MongoDB not connected")
+        if not self.session_factory:
+            self.logger.error("SQLAlchemy not initialized")
             return 0
 
         try:
-            users_collection = self.db["users"]
+            session = self.session_factory()
+            user = session.query(self.User).filter_by(username=username).first()
 
-            # Use findAndModify (findOneAndUpdate) to atomically update and return the value
-            # This is more efficient than doing separate update and find operations
-            result = users_collection.find_one_and_update(
-                {"username": username},  # Uses the username_idx index
-                {"$inc": {"login_attempts": 1}},  # Increment login_attempts by 1
-                projection={"login_attempts": 1},  # Only return the login_attempts field
-                return_document=pymongo.ReturnDocument.AFTER  # Return the document after update
-            )
+            if not user:
+                session.close()
+                return 0
 
-            # Return the new login attempts count, or 0 if the update failed
-            return result.get("login_attempts", 0) if result else 0
+            user.login_attempts += 1
+            session.commit()
+
+            attempts = user.login_attempts
+            session.close()
+
+            return attempts
 
         except Exception as e:
             self.logger.error(f"Error incrementing login attempts for user '{username}': {e}")
+            if session:
+                session.rollback()
+                session.close()
             return 0
 
     def reset_login_attempts(self, username: str) -> bool:
         """
-        Reset the login attempts counter for a user with index optimization.
+        Reset the login attempts counter for a user.
 
         Args:
             username: The username of the user.
@@ -1345,36 +1350,30 @@ class SQLAlchemyAdapter(DatabaseAdapter):
         Returns:
             True if successful, False otherwise.
         """
-        if not self.db:
-            self.logger.error("MongoDB not connected")
+        if not self.session_factory:
+            self.logger.error("SQLAlchemy not initialized")
             return False
 
         try:
-            users_collection = self.db["users"]
+            session = self.session_factory()
+            user = session.query(self.User).filter_by(username=username).first()
 
-            # Update the login_attempts field to 0 and clear locked_until
-            # This uses the username_idx index for efficient lookup
-            result = users_collection.update_one(
-                {"username": username},
-                {
-                    "$set": {
-                        "login_attempts": 0,
-                        "locked_until": None
-                    }
-                }
-            )
+            if not user:
+                session.close()
+                return False
 
-            # Check if the update was successful
-            success = result.modified_count > 0
-            if success:
-                self.logger.debug(f"Reset login attempts for user '{username}'")
-            else:
-                self.logger.warning(f"Failed to reset login attempts for user '{username}' - user not found")
+            user.login_attempts = 0
+            user.locked_until = None
+            session.commit()
 
-            return success
+            session.close()
+            return True
 
         except Exception as e:
             self.logger.error(f"Error resetting login attempts for user '{username}': {e}")
+            if session:
+                session.rollback()
+                session.close()
             return False
 
     def get_user_by_reset_token(self, token: str) -> Optional[Dict[str, Any]]:
