@@ -10,21 +10,15 @@ database backends and customizable routes.
 import logging
 import re
 import time
-from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, Tuple, Union
+from datetime import datetime, timedelta, timezone
+from functools import wraps
+from typing import Optional  # Add Callable to imports
+from typing import Any, Callable, Dict, Tuple, Union
 
 # Import Duo Universal SDK
 from duo_universal.client import Client, DuoException
-from flask import (
-    Blueprint,
-    Flask,
-    current_app,
-    jsonify,
-    request,
-)
-from flask_login import (
-    LoginManager,
-)
+from flask import Blueprint, Flask, current_app, jsonify, request
+from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 
 # Define version directly to avoid import issues
@@ -84,7 +78,19 @@ except ImportError:
         class DatabaseAdapter:
             """Mock DatabaseAdapter for documentation purposes"""
 
-            pass
+            def list_users(
+                self,
+                filter_criteria=None,
+                limit=100,
+                skip=0,
+                sort_by="username",
+                sort_direction=1,
+            ):
+                """
+                Mock implementation of list_users.
+                Returns an empty list for demonstration purposes.
+                """
+                return []
 
         def get_db_adapter(*args, **kwargs):
             """Mock get_db_adapter function"""
@@ -95,8 +101,9 @@ except ImportError:
 
             pass
 
-        def get_user_factory(*args, **kwargs):
+        def get_user_factory(user_model: str, *args, **kwargs):
             """Mock get_user_factory function"""
+            _ = user_model, args, kwargs  # Suppress unused argument warning
             return None
 
         class AuthError(Exception):
@@ -235,6 +242,8 @@ class DuoFlaskAuth:
         }
 
         # Create cache instance based on configuration
+        # Accept any cache implementation, not just MemoryCache[Any]
+        self.cache: Any = None
         if self.cache_config.get("enabled", True):
             try:
                 # First try to import from the package
@@ -320,8 +329,43 @@ class DuoFlaskAuth:
                     )
             except Exception as e:
                 self.logger.error(f"Error initializing cache: {e}. Using NoCache fallback.")
-                # Create a simple NoCache implementation if other attempts fail
-                self.cache = NoCache()
+                # Ensure NoCache is defined before using it
+                try:
+                    self.cache = NoCache()
+                except NameError:
+
+                    class CacheStats:
+                        def __init__(self):
+                            self.hits = 0
+                            self.misses = 0
+                            self.sets = 0
+                            self.deletes = 0
+                            self.clears = 0
+                            self.hit_rate = 0
+
+                    class NoCache:
+                        def __init__(self):
+                            self.stats = CacheStats()
+
+                        def get(self, key):
+                            return None
+
+                        def set(self, key, value, ttl=None):
+                            pass
+
+                        def delete(self, key):
+                            pass
+
+                        def clear(self):
+                            pass
+
+                        def get_keys(self):
+                            return []
+
+                        def get_stats(self):
+                            return self.stats
+
+                    self.cache = NoCache()
         else:
             # Use dummy cache if caching is disabled
             try:
@@ -394,6 +438,7 @@ class DuoFlaskAuth:
                 self.logger.info("Using minimal dummy cache implementation")
 
         # Initialize database adapter
+        self.db_adapter: Optional[DatabaseAdapter] = None
         if isinstance(db_adapter, DatabaseAdapter):
             self.db_adapter = db_adapter
         elif isinstance(db_adapter, str):
@@ -457,6 +502,27 @@ class DuoFlaskAuth:
         if app is not None:
             self.init_app(app)
 
+    def login_required(self, func: Callable) -> Callable:
+        """
+        Decorator to require login for a route.
+
+        This is a wrapper around Flask-Login's login_required decorator
+        to make it accessible from the DuoFlaskAuth instance.
+
+        Args:
+            func: The view function to decorate
+
+        Returns:
+            The decorated function
+        """
+        from flask_login import login_required as flask_login_required
+
+        @wraps(func)
+        def decorated_view(*args, **kwargs):
+            return flask_login_required(func)(*args, **kwargs)
+
+        return decorated_view
+
     def _init_rate_limiter(self):
         """Initialize the appropriate rate limiter based on configuration."""
         rate_limit_type = self.rate_limit_config.get("type", "memory")
@@ -516,11 +582,18 @@ class DuoFlaskAuth:
 
         # Set up the database adapter if provided
         if self.db_adapter:
-            self.db_adapter.initialize(app)
+            if hasattr(self.db_adapter, "initialize") and callable(
+                getattr(self.db_adapter, "initialize", None)
+            ):
+                self.db_adapter.initialize(app)
 
             # Verify database indexes after initialization
             # This ensures all necessary indexes exist
-            if hasattr(self.db_adapter, "verify_indexes"):
+            if (
+                self.db_adapter is not None
+                and hasattr(self.db_adapter, "verify_indexes")
+                and callable(getattr(self.db_adapter, "verify_indexes", None))
+            ):
 
                 def verify_database_indexes():
                     try:
@@ -552,8 +625,16 @@ class DuoFlaskAuth:
                 # For Flask < 2.2.0, try before_first_request if available
                 elif hasattr(app, "before_first_request"):
                     try:
-                        app.before_first_request(verify_database_indexes)
-                        app.logger.debug("Registered index verification with before_first_request")
+                        if hasattr(app, "before_first_request"):
+                            app.before_first_request(verify_database_indexes)
+                            app.logger.debug(
+                                "Registered index verification with before_first_request"
+                            )
+                        else:
+                            app.logger.debug(
+                                "before_first_request not available, running index verification immediately"
+                            )
+                            verify_database_indexes()
                     except Exception as e:
                         app.logger.warning(
                             f"Failed to use before_first_request: {e}. Using fallback."
@@ -604,22 +685,43 @@ class DuoFlaskAuth:
 
         try:
             # Test connection based on adapter type
-            if hasattr(self.db_adapter, "check_connection_health"):
+            if self.db_adapter is not None and hasattr(
+                self.db_adapter, "check_connection_health"
+            ):
                 # Use adapter's built-in health check if available
                 is_healthy = self.db_adapter.check_connection_health()
-            elif hasattr(self.db_adapter, "db") and hasattr(self.db_adapter.db, "command"):
+            elif (
+                self.db_adapter is not None
+                and hasattr(self.db_adapter, "db")
+                and hasattr(self.db_adapter.db, "command")
+            ):
                 # For MongoDB adapter
                 self.db_adapter.db.command("ping")
                 is_healthy = True
-            elif hasattr(self.db_adapter, "engine") and hasattr(self.db_adapter.engine, "connect"):
+            elif (
+                self.db_adapter is not None
+                and hasattr(self.db_adapter, "engine")
+                and self.db_adapter.engine is not None
+                and hasattr(self.db_adapter.engine, "connect")
+            ):
                 # For SQLAlchemy adapter
-                with self.db_adapter.engine.connect() as conn:
+                conn = self.db_adapter.engine.connect()
+                try:
                     conn.execute("SELECT 1")
+                finally:
+                    conn.close()
                 is_healthy = True
             else:
-                # Generic test - try to get a user
-                self.db_adapter.get_user("__health_check__")
-                is_healthy = True
+                # Generic test - try to get a user if db_adapter is not None
+                if self.db_adapter is not None and hasattr(self.db_adapter, "get_user"):
+                    self.db_adapter.get_user("__health_check__")
+                    is_healthy = True
+                else:
+                    return {
+                        "status": "not_configured",
+                        "message": "Database adapter is not configured",
+                        "timestamp": datetime.utcnow(),
+                    }
 
             return {
                 "status": "healthy" if is_healthy else "unhealthy",
@@ -1090,15 +1192,33 @@ class DuoFlaskAuth:
 
             # Create a User object with the cached data
             try:
-                user = self.user_factory(cached_user)
-                return user
+                if self.user_factory is not None:
+                    user = self.user_factory(cached_user)
+                    return user
+                else:
+                    current_app.logger.error("User factory is not configured")
+                    # Fall through to database lookup
             except Exception as e:
                 current_app.logger.error(f"Error creating user object from cache: {e}")
                 # Fall through to database lookup
 
         # User not in cache, get from database
         current_app.logger.debug(f"User '{user_id}' not found in cache, querying database")
-        user_data = self.db_adapter.get_user(user_id)
+        # Use get_user if available, otherwise fallback to find_user or appropriate method
+        user_data = None
+        if hasattr(self.db_adapter, "get_user") and callable(
+            getattr(self.db_adapter, "get_user", None)
+        ):
+            user_data = self.db_adapter.get_user(user_id)
+        elif hasattr(self.db_adapter, "find_user") and callable(
+            getattr(self.db_adapter, "find_user", None)
+        ):
+            user_data = self.db_adapter.find_user(user_id)
+        else:
+            current_app.logger.error(
+                "Database adapter does not support user retrieval (no 'get_user' or 'find_user' method found)"
+            )
+            return None
 
         if not user_data:
             current_app.logger.debug(f"User '{user_id}' not found in database")
@@ -1115,8 +1235,12 @@ class DuoFlaskAuth:
 
         # Create a User object with the data from the database
         try:
-            user = self.user_factory(user_data)
-            return user
+            if self.user_factory is not None:
+                user = self.user_factory(user_data)
+                return user
+            else:
+                current_app.logger.error("User factory is not configured")
+                return None
         except Exception as e:
             current_app.logger.error(f"Error creating user object: {e}")
             return None
@@ -1203,8 +1327,13 @@ class DuoFlaskAuth:
         else:
             # Use memory store (original implementation)
             # Check if the key exists in the store
-            if cache_key not in self._rate_limit_store:
+            if (
+                not isinstance(self._rate_limit_store, dict)
+                or cache_key not in self._rate_limit_store
+            ):
                 # If not, create a new entry
+                if not isinstance(self._rate_limit_store, dict):
+                    self._rate_limit_store = {}
                 self._rate_limit_store[cache_key] = {
                     "attempts": 1,
                     "first_attempt": now,
@@ -1250,7 +1379,10 @@ class DuoFlaskAuth:
                 self.logger.error(f"Redis error while resetting rate limit: {e}")
         else:
             # Use memory store
-            if cache_key in self._rate_limit_store:
+            if (
+                isinstance(self._rate_limit_store, dict)
+                and cache_key in self._rate_limit_store
+            ):
                 del self._rate_limit_store[cache_key]
 
     def _check_account_lockout(self, username: str) -> Tuple[bool, Optional[str]]:
@@ -1269,7 +1401,16 @@ class DuoFlaskAuth:
             return False, None
 
         # Get user data
-        user_data = self.db_adapter.get_user(username)
+        if hasattr(self.db_adapter, "get_user") and callable(
+            getattr(self.db_adapter, "get_user", None)
+        ):
+            user_data = self.db_adapter.get_user(username)
+        elif hasattr(self.db_adapter, "find_user") and callable(
+            getattr(self.db_adapter, "find_user", None)
+        ):
+            user_data = self.db_adapter.find_user(username)
+        else:
+            user_data = None
 
         if not user_data:
             return False, None
@@ -1294,13 +1435,19 @@ class DuoFlaskAuth:
             )  # 30 minutes
             locked_until = datetime.utcnow() + timedelta(seconds=lockout_duration)
 
-            # Update the user record
-            self.db_adapter.update_user(username, {"locked_until": locked_until})
-
-            # Invalidate cache
-            self._invalidate_user_cache(username)
-
-            return True, f"Account is locked until {locked_until}"
+            # Update the user record if possible
+            if hasattr(self.db_adapter, "update_user") and callable(
+                getattr(self.db_adapter, "update_user", None)
+            ):
+                self.db_adapter.update_user(username, {"locked_until": locked_until})
+                # Invalidate cache
+                self._invalidate_user_cache(username)
+                return True, f"Account is locked until {locked_until}"
+            else:
+                self.logger.error(
+                    "Database adapter does not support 'update_user'. Cannot lock account."
+                )
+                return False, "Database adapter does not support account locking"
 
         return False, None
 
@@ -1356,5 +1503,5 @@ class DuoFlaskAuth:
             return False
 
         # Check if the password is older than the maximum age
-        password_age = (datetime.utcnow() - last_password_change).days
+        password_age = (datetime.now(timezone.utc) - last_password_change).days
         return password_age > max_age_days
