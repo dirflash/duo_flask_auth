@@ -34,7 +34,7 @@ jobs:
       run: |
         pytest --cov=duo_flask_auth
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v6
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         file: ./coverage.xml
